@@ -1,0 +1,1 @@
+- omeni, da lahko s pure C kodo naredimo zelo dobre optimizacije, ki jih z bpf kodo ne moremo (malloc za vsak syscall, ker imamo 1 funkcijo za vse velikosti key/value)
