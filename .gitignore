@@ -1,3 +1,4 @@
 linux
 *.deb
 .pc
+.vscode
