@@ -42,7 +42,7 @@ static int load_accelerator()
     printf("XFE Programs:\n");
     bpf_object__for_each_program(prog, obj)
     {
-        const char *title = bpf_program__title(prog, false);
+        const char *title = bpf_program__section_name(prog);
         int error = bpf_program__set_xdp(prog);
 
         printf(" - %s (set program type to xdp)\n", title);
