@@ -10,6 +10,8 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 
+#include "xfe_types.h"
+
 #define MAX_PAYLOAD 1024 /* maximum payload size */
 #define NETLINK_TEST 17
 #define OBJ_PATH "../xdp/xfe_accelerator.o"
@@ -21,7 +23,9 @@ int sock_fd;
 
 static int load_accelerator()
 {
+    struct bpf_program *prog;
     struct bpf_object *obj;
+    struct bpf_map *map;
     long error;
 
     /* Open BPF object */
@@ -200,12 +204,12 @@ int init_kmod()
     }
 
     /* Initialize kernel module */
-    err = set_map_fd(map_fd);
-    if (err)
-    {
-        printf("Could not initialize kernel module.\n");
-        goto exit;
-    }
+    // err = set_map_fd(map_fd);
+    // if (err)
+    // {
+    //     printf("Could not initialize kernel module.\n");
+    //     goto exit;
+    // }
 
 exit:
     deinit_netlink();
