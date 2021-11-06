@@ -3,3 +3,5 @@ linux
 .pc
 .vscode
 TODO
+*.o
+*.ko
