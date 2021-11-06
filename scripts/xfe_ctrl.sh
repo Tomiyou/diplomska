@@ -3,8 +3,9 @@
 CUR_DIR=$(pwd)
 BASE_DIR=$(dirname "$CUR_DIR")
 
-# Export BPF shared lib path
+# Export ENV variables
 export LD_LIBRARY_PATH=${BASE_DIR}/linux/tools/lib/bpf:$LD_LIBRARY_PATH
+export XFE_OBJ_PATH=${BASE_DIR}/xfe/xdp/xfe_accelerator.o
 
 # If BPF filesystem isn't mounted yet, do it now
 if [[ ! -d /sys/fs/bpf/xfe ]]; then

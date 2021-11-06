@@ -14,14 +14,13 @@
 
 #define MAX_PAYLOAD 1024 /* maximum payload size */
 #define NETLINK_TEST 17
-#define OBJ_PATH "../xdp/xfe_accelerator.o"
 #define OBJ_PIN_PATH "/sys/fs/bpf/xfe"
 
 struct sockaddr_nl src_addr;
 struct sockaddr_nl dest_addr;
 int sock_fd;
 
-static int load_accelerator()
+static int load_accelerator(const char* obj_path)
 {
     struct bpf_program *prog;
     struct bpf_object *obj;
@@ -29,7 +28,7 @@ static int load_accelerator()
     long error;
 
     /* Open BPF object */
-    obj = bpf_object__open(OBJ_PATH);
+    obj = bpf_object__open(obj_path);
     error = libbpf_get_error(obj);
     if (error)
     {
@@ -182,7 +181,7 @@ static int set_map_fd(unsigned int map_fd)
     return 0;
 }
 
-int init_kmod()
+int init_kmod(const char* obj_path)
 {
     int err;
 
@@ -196,7 +195,7 @@ int init_kmod()
     }
 
     /* Load accelerator */
-    err = load_accelerator();
+    err = load_accelerator(obj_path);
     if (err)
     {
         printf("Could not load XDP accelerator.\n");
@@ -218,34 +217,48 @@ exit:
 
 int main(int argc, char **argv)
 {
-    int err, i;
+    char* xfe_obj_path = getenv("XFE_OBJ_PATH");
+    const char* cmd;
+    int err = 0;
+    int i;
 
+    /* Check if XFE_OBJ_PATH environment variable is set */
+    if (!xfe_obj_path)
+    {
+        printf("XFE_OBJ_PATH environment variable is NOT set\n");
+        return -1;
+    }
+
+    /* Check if proper command argument was provided */
     if (argc < 2)
     {
-        printf("Usage: command [parameter]\n");
-        return 0;
+        printf("Usage: command [arguments...]\n");
+        return -1;
     }
 
-    if (strncmp(argv[1], "init", 4) == 0)
+    cmd = argv[1];
+
+    if (strncmp(cmd, "init", 4) == 0)
     {
         /* Init accelerator */
-
         printf("Initializing accelerator\n");
-        init_kmod();
+        err = init_kmod(xfe_obj_path);
     }
-    else if (strncmp(argv[1], "attach", 6) == 0)
+    else if (strncmp(cmd, "attach", 6) == 0)
     {
         /* Attach XDP to interface */
-
         if (argc < 3)
         {
             printf("Attach command requires interface name as argument\n");
-            return 0;
+            return -1;
         }
 
-        printf("Attaching accelerator to interface %s\n", argv[2
-        ]);
+        printf("Attaching accelerator to interface %s\n", argv[2]);
         // attach_interface()
+    }
+    else
+    {
+        printf("No command specified.\n");
     }
 
     return err;
