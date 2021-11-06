@@ -22,7 +22,6 @@ int sock_fd;
 static int load_accelerator()
 {
     struct bpf_object *obj;
-    int map_fd = 0;
     long error;
 
     /* Open BPF object */
@@ -56,7 +55,6 @@ static int load_accelerator()
     {
         const char *name = bpf_map__name(map);
         printf(" - %s\n", name);
-        map_fd = map->fd;
     }
 
     /* Load programs and maps */
@@ -86,9 +84,7 @@ static int load_accelerator()
 close:
     bpf_object__close(obj);
 
-    if (error)
-        return -1;
-    return map_fd;
+    return error;
 }
 
 static int init_netlink()
@@ -158,11 +154,20 @@ static int send_netlink(void *data, size_t data_len)
     return 0;
 }
 
-static int init_kmod(unsigned int map_fd)
+static int set_map_fd(unsigned int map_fd)
 {
     struct xfe_nl_msg xfe_msg = {
         XFE_MSG_MAP_FD,
-        map_fd};
+        0};
+    int fd;
+
+    // fd = bpf_obj_get(OBJ_PIN_PATH "/%s", map_name);
+    if (fd < 1) {
+        printf("Could not load XDP map\n");
+        return -1;
+    }
+
+    xfe_msg.msg_value = fd;
 
     if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
     {
@@ -173,10 +178,11 @@ static int init_kmod(unsigned int map_fd)
     return 0;
 }
 
-int main(int argc, char **argv)
+int init_kmod()
 {
-    int map_fd;
     int err;
+
+    // TODO: Check if already initialized (xdp pinned, etc)
 
     err = init_netlink();
     if (err)
@@ -186,15 +192,15 @@ int main(int argc, char **argv)
     }
 
     /* Load accelerator */
-    map_fd = load_accelerator();
-    if (map_fd < -1)
+    err = load_accelerator();
+    if (err)
     {
         printf("Could not load XDP accelerator.\n");
         goto exit;
     }
 
     /* Initialize kernel module */
-    err = init_kmod();
+    err = set_map_fd(map_fd);
     if (err)
     {
         printf("Could not initialize kernel module.\n");
@@ -203,5 +209,40 @@ int main(int argc, char **argv)
 
 exit:
     deinit_netlink();
+    return err;
+}
+
+int main(int argc, char **argv)
+{
+    int err, i;
+
+    if (argc < 2)
+    {
+        printf("Usage: command [parameter]\n");
+        return 0;
+    }
+
+    if (strncmp(argv[1], "init", 4) == 0)
+    {
+        /* Init accelerator */
+
+        printf("Initializing accelerator\n");
+        init_kmod();
+    }
+    else if (strncmp(argv[1], "attach", 6) == 0)
+    {
+        /* Attach XDP to interface */
+
+        if (argc < 3)
+        {
+            printf("Attach command requires interface name as argument\n");
+            return 0;
+        }
+
+        printf("Attaching accelerator to interface %s\n", argv[2
+        ]);
+        // attach_interface()
+    }
+
     return err;
 }
