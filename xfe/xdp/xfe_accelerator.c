@@ -35,7 +35,7 @@ static int lookup_flow_entry(struct xdp_md *ctx)
 }
 
 SEC("xfe_ingress")
-int xfe_ingress(struct xdp_md *ctx)
+int xfe_ingress_fn(struct xdp_md *ctx)
 {
     int flow_found = lookup_flow_entry(ctx);
     if (flow_found)

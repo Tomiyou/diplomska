@@ -5,3 +5,4 @@ linux
 TODO
 *.o
 *.ko
+*.ll
