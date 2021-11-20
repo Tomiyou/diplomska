@@ -5,6 +5,7 @@
 #include <errno.h>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <linux/netlink.h>
 
 #include <bpf/bpf.h>
@@ -19,13 +20,21 @@
 struct sockaddr_nl src_addr;
 struct sockaddr_nl dest_addr;
 int sock_fd;
+int map_fd;
 
-static int load_accelerator(const char* obj_path)
+static int load_accelerator(const char *obj_path)
 {
     struct bpf_program *prog;
     struct bpf_object *obj;
     struct bpf_map *map;
+    struct stat buf;
     long error;
+
+    /* Todo: check if already initialized */
+    if (stat(OBJ_PIN_PATH "/xfe_flows", &buf) != 0)
+    {
+        return 0;
+    }
 
     /* Open BPF object */
     obj = bpf_object__open(obj_path);
@@ -157,35 +166,18 @@ static int send_netlink(void *data, size_t data_len)
     return 0;
 }
 
-static int set_map_fd(unsigned int map_fd)
+int get_map_fd()
+{
+    map_fd = bpf_obj_get(OBJ_PIN_PATH "/xfe_flows");
+    return map_fd;
+}
+
+int init_kmod(int map_fd)
 {
     struct xfe_nl_msg xfe_msg = {
         XFE_MSG_MAP_FD,
-        0};
-    int fd;
-
-    // fd = bpf_obj_get(OBJ_PIN_PATH "/%s", map_name);
-    if (fd < 1) {
-        printf("Could not load XDP map\n");
-        return -1;
-    }
-
-    xfe_msg.msg_value = fd;
-
-    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
-    {
-        printf("Could not initialize netlink.\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-int init_kmod(const char* obj_path)
-{
+        map_fd};
     int err;
-
-    // TODO: Check if already initialized (xdp pinned, etc)
 
     err = init_netlink();
     if (err)
@@ -194,21 +186,12 @@ int init_kmod(const char* obj_path)
         return err;
     }
 
-    /* Load accelerator */
-    err = load_accelerator(obj_path);
-    if (err)
+    /* Send map FD down to kernel module */
+    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
     {
-        printf("Could not load XDP accelerator.\n");
-        goto exit;
+        printf("Could not initialize netlink.\n");
+        return -1;
     }
-
-    /* Initialize kernel module */
-    // err = set_map_fd(map_fd);
-    // if (err)
-    // {
-    //     printf("Could not initialize kernel module.\n");
-    //     goto exit;
-    // }
 
 exit:
     deinit_netlink();
@@ -217,10 +200,9 @@ exit:
 
 int main(int argc, char **argv)
 {
-    char* xfe_obj_path = getenv("XFE_OBJ_PATH");
-    const char* cmd;
+    char *xfe_obj_path = getenv("XFE_OBJ_PATH");
+    const char *cmd;
     int err = 0;
-    int i;
 
     /* Check if XFE_OBJ_PATH environment variable is set */
     if (!xfe_obj_path)
@@ -242,7 +224,28 @@ int main(int argc, char **argv)
     {
         /* Init accelerator */
         printf("Initializing accelerator\n");
-        err = init_kmod(xfe_obj_path);
+
+        err = load_accelerator(obj_path);
+        if (err)
+        {
+            printf("Could not load XDP accelerator.\n");
+            return -1;
+        }
+
+        if (get_map_fd() < 0)
+        {
+            printf("Could not get map FD.\n");
+            return -1;
+        }
+
+        // err = init_kmod(map_fd);
+        // if (err)
+        // {
+        //     printf("Could not load kernel module.\n");
+        //     goto exit;
+        // }
+
+        close(map_fd);
     }
     else if (strncmp(cmd, "attach", 6) == 0)
     {
@@ -255,6 +258,11 @@ int main(int argc, char **argv)
 
         printf("Attaching accelerator to interface %s\n", argv[2]);
         // attach_interface()
+    }
+    else if (strncmp(cmd, "deinit", 6) == 0)
+    {
+        /* Stop kernel module */
+        /* Close all pinned objects */
     }
     else
     {
