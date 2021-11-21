@@ -10,10 +10,36 @@
  	map = __bpf_map_get(f);
  	if (IS_ERR(map))
  		return PTR_ERR(map);
-@@ -1087,6 +1089,91 @@ err_put:
+@@ -1087,6 +1089,117 @@ err_put:
  	return err;
  }
  
++int accel_map_test_fn(int ufd)
++{
++	struct bpf_map *map;
++	struct fd f;
++
++	if (CHECK_ATTR(BPF_MAP_LOOKUP_ELEM))
++		return -EINVAL;
++
++	if (attr->flags & ~BPF_F_LOCK)
++		return -EINVAL;
++
++	printk("User FD %d\n", ufd);
++	f = fdget(ufd);
++	printk("Kernel FD %p %u\n", f.file, f.flags);
++	map = __bpf_map_get(f);
++	if (IS_ERR(map))
++	{
++		printk("IS ERROR == TRUE\n");
++		return -1;
++	}
++
++	printk("Found map !!!!!\n");
++}
++
++EXPORT_SYMBOL(accel_map_test_fn);
++
 +int accel_map_get_fd(int ufd)
 +{
 +	return fdget(ufd);
