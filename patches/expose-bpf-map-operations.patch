@@ -10,7 +10,7 @@
  	map = __bpf_map_get(f);
  	if (IS_ERR(map))
  		return PTR_ERR(map);
-@@ -1087,6 +1089,117 @@ err_put:
+@@ -1087,6 +1089,111 @@ err_put:
  	return err;
  }
  
@@ -18,12 +18,6 @@
 +{
 +	struct bpf_map *map;
 +	struct fd f;
-+
-+	if (CHECK_ATTR(BPF_MAP_LOOKUP_ELEM))
-+		return -EINVAL;
-+
-+	if (attr->flags & ~BPF_F_LOCK)
-+		return -EINVAL;
 +
 +	printk("User FD %d\n", ufd);
 +	f = fdget(ufd);
@@ -36,21 +30,21 @@
 +	}
 +
 +	printk("Found map !!!!!\n");
++	return 0;
 +}
 +
 +EXPORT_SYMBOL(accel_map_test_fn);
 +
-+int accel_map_get_fd(int ufd)
++struct fd accel_map_get_fd(int ufd)
 +{
 +	return fdget(ufd);
 +}
 +
 +EXPORT_SYMBOL(accel_map_get_fd);
 +
-+int accel_map_lookup_elem(int f, void *key, void *value, u64 flags)
++int accel_map_lookup_elem(struct fd f, void *key, void *value, u64 flags)
 +{
 +	struct bpf_map *map;
-+	int err;
 +
 +	/*
 +	 *		**BPF_F_LOCK**
@@ -63,7 +57,7 @@
 +	if (CHECK_ATTR(BPF_MAP_LOOKUP_ELEM))
 +		return -EINVAL; */
 +
-+	if (attr->flags & ~BPF_F_LOCK) {
++	if (flags & ~BPF_F_LOCK) {
 +		printk("accel_map_lookup_elem: Wrong flag given.\n");
 +		return -EINVAL;
 +	}
@@ -78,7 +72,7 @@
 +		return -EPERM;
 +	}
 +
-+	if ((attr->flags & BPF_F_LOCK) &&
++	if ((flags & BPF_F_LOCK) &&
 +	    !map_value_has_spin_lock(map)) {
 +		printk("accel_map_lookup_elem: Map does NOT have spinlock.\n");
 +		return -EINVAL;
