@@ -1,8 +1,7 @@
 obj-m += xfe_main.o
-
-CURRENT_DIR = $(shell pwd)
+ccflags-y += -I$(obj)/../headers/
 
 all:
-	make -C ../../linux/ M=$(CURRENT_DIR) modules
+	$(MAKE) -C ../../linux/ M=$(CURDIR) modules
 clean:
-	make -C ../../linux/ M=$(CURRENT_DIR) clean
+	$(MAKE) -C ../../linux/ M=$(CURDIR) clean

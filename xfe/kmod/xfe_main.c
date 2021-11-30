@@ -3,6 +3,8 @@
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
 
+#include "xfe_types.h"
+
 #define NETLINK_TEST 17
 
 struct sock *nl_sock = NULL;
@@ -14,13 +16,13 @@ static void netlink_recv_msg(struct sk_buff *skb)
 {
     struct sk_buff *skb_out;
     struct nlmsghdr *nlh;
-    struct nl_msg *msg;
+    struct xfe_nl_msg *msg;
     int pid;
     int res;
 
     nlh = (struct nlmsghdr *)skb->data;
     pid = nlh->nlmsg_pid; /* pid of sending process */
-    msg = (struct nl_msg *)nlmsg_data(nlh);
+    msg = (struct xfe_nl_msg *)nlmsg_data(nlh);
 
     if (msg->msg_type == XFE_MSG_MAP_FD) {
         map_fd = msg->msg_value;
@@ -33,8 +35,6 @@ static void netlink_recv_msg(struct sk_buff *skb)
 
 static int __init xfe_init(void)
 {
-    printk(KERN_INFO "XFE init\n");
-
     struct netlink_kernel_cfg cfg = {
         .input = netlink_recv_msg,
     };
@@ -45,6 +45,8 @@ static int __init xfe_init(void)
         printk(KERN_ALERT "Error creating socket.\n");
         return -10;
     }
+
+    printk(KERN_INFO "XFE init\n");
 
     return 0;
 }
