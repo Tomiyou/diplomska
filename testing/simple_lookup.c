@@ -90,12 +90,22 @@ int do_netlink(int map_fd) {
 int main() {
     int err;
     int map_fd;
-    __u32 key;
+    __u32 key = 37;
     struct xfe_flow value;
+    struct xfe_flow _value = {
+        .stats = 25
+    };
 
     map_fd = bpf_obj_get("/sys/fs/bpf/xfe/xfe_flows");
-    if (prog_fd < 0) {
+    if (map_fd < 0) {
         printf("Error obtaining map FD\n");
+        return -1;
+    }
+
+    err = bpf_map_update_elem(map_fd, &key, &_value, 0);
+    if (err != 0) {
+        printf("Error occured during update\n");
+        close(map_fd);
         return -1;
     }
 
@@ -105,6 +115,8 @@ int main() {
         close(map_fd);
         return -1;
     }
+
+    do_netlink(map_fd);
 
     close(map_fd);
 
