@@ -31,8 +31,9 @@ static int load_accelerator(const char *obj_path)
     long error;
 
     /* Todo: check if already initialized */
-    if (stat(OBJ_PIN_PATH "/xfe_flows", &buf) != 0)
+    if (stat(OBJ_PIN_PATH "/xfe_flows", &buf) == 0)
     {
+        printf("Accelerator already loaded.\n");
         return 0;
     }
 
@@ -225,7 +226,7 @@ int main(int argc, char **argv)
         /* Init accelerator */
         printf("Initializing accelerator\n");
 
-        err = load_accelerator(obj_path);
+        err = load_accelerator(xfe_obj_path);
         if (err)
         {
             printf("Could not load XDP accelerator.\n");
