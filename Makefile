@@ -2,6 +2,7 @@ clean:
 	make -C xfe clean
 	quilt pop -a
 	rm -rf linux
+	rm -rf linux.orig
 	rm *.deb
 
 linux:

@@ -6,3 +6,10 @@ TODO
 *.o
 *.ko
 *.ll
+*.cmd
+*.mod
+*.mod.c
+*.symvers
+*.order
+*.d
+*.gz
