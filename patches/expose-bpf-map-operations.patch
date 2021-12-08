@@ -122,3 +122,13 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
+--- a/linux/include/linux/bpf.h
++++ b/linux/include/linux/bpf.h
+@@ -1292,6 +1292,7 @@ struct bpf_map *bpf_map_get_with_uref(u3
+ struct bpf_map *__bpf_map_get(struct fd f);
+ void bpf_map_inc(struct bpf_map *map);
+ void bpf_map_inc_with_uref(struct bpf_map *map);
++int accel_map_test_fn(int ufd);
+ struct bpf_map * __must_check bpf_map_inc_not_zero(struct bpf_map *map);
+ void bpf_map_put_with_uref(struct bpf_map *map);
+ void bpf_map_put(struct bpf_map *map);
