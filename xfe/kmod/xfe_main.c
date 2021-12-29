@@ -9,8 +9,9 @@
 
 struct sock *nl_sock = NULL;
 
-unsigned int map_fd = 0;
 bool initialized = false;
+bool fd_valid = false;
+struct fd f;
 
 static void netlink_recv_msg(struct sk_buff *skb)
 {
@@ -25,12 +26,25 @@ static void netlink_recv_msg(struct sk_buff *skb)
     msg = (struct xfe_nl_msg *)nlmsg_data(nlh);
 
     if (msg->msg_type == XFE_MSG_MAP_FD) {
-        map_fd = msg->msg_value;
-        initialized = true;
-        printk(KERN_INFO "xfe netlink: Received FD %u\n", map_fd);
-    }
+        int user_fd = msg->msg_value;
+        printk(KERN_INFO "xfe netlink: Received FD %u\n", user_fd);
 
-    // printk(KERN_INFO "netlink_test: Received from pid %d: %s\n", pid, msg);
+        /* Close old FD */
+        if (fd_valid)
+        {
+            printk(KERN_INFO "xfe netlink: Closing old FD\n");
+            fdput(f);
+        }
+
+        /* If instructed, get new FD */
+        if (user_fd >= 0) {
+            fd_valid = accel_map_get_fd(user_fd, &f);
+        }
+
+        initialized = true;
+    } else {
+        printk(KERN_INFO "xfe netlink: Unknown message type %u\n", msg->msg_value);
+    }
 }
 
 static int __init xfe_init(void)

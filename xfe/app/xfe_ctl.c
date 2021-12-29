@@ -22,7 +22,7 @@ struct sockaddr_nl dest_addr;
 int sock_fd;
 int map_fd;
 
-static int load_accelerator(const char *obj_path)
+static int load_xdp(const char *obj_path)
 {
     struct bpf_program *prog;
     struct bpf_object *obj;
@@ -173,19 +173,11 @@ int get_map_fd()
     return map_fd;
 }
 
-int init_kmod(int map_fd)
+int kmod_set_map_fd(int map_fd)
 {
     struct xfe_nl_msg xfe_msg = {
         XFE_MSG_MAP_FD,
         map_fd};
-    int err;
-
-    err = init_netlink();
-    if (err)
-    {
-        printf("Could not initialize netlink.\n");
-        return err;
-    }
 
     /* Send map FD down to kernel module */
     if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
@@ -194,9 +186,7 @@ int init_kmod(int map_fd)
         return -1;
     }
 
-exit:
-    deinit_netlink();
-    return err;
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -219,6 +209,14 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    /* Init netlink */
+    err = init_netlink();
+    if (err)
+    {
+        printf("Could not initialize netlink.\n");
+        return -1;
+    }
+
     cmd = argv[1];
 
     if (strncmp(cmd, "init", 4) == 0)
@@ -226,26 +224,33 @@ int main(int argc, char **argv)
         /* Init accelerator */
         printf("Initializing accelerator\n");
 
-        err = load_accelerator(xfe_obj_path);
+        /* Load XDP objects */
+        err = load_xdp(xfe_obj_path);
         if (err)
         {
             printf("Could not load XDP accelerator.\n");
-            return -1;
+            err = -1;
+            goto exit;
         }
 
+        /* Get flows map FD */
         if (get_map_fd() < 0)
         {
             printf("Could not get map FD.\n");
-            return -1;
+            err = -1;
+            goto exit;
         }
 
-        // err = init_kmod(map_fd);
-        // if (err)
-        // {
-        //     printf("Could not load kernel module.\n");
-        //     goto exit;
-        // }
+        /* Send flows map FD to kmod */
+        err = kmod_set_map_fd(map_fd);
+        if (err)
+        {
+            printf("Could not load kernel module.\n");
+            err = -1;
+            goto exit;
+        }
 
+        /* Finish */
         close(map_fd);
     }
     else if (strncmp(cmd, "attach", 6) == 0)
@@ -254,21 +259,36 @@ int main(int argc, char **argv)
         if (argc < 3)
         {
             printf("Attach command requires interface name as argument\n");
-            return -1;
+            err = -1;
+            goto exit;
         }
 
         printf("Attaching accelerator to interface %s\n", argv[2]);
-        // attach_interface()
+        // TODO: attach_interface()
     }
     else if (strncmp(cmd, "deinit", 6) == 0)
     {
-        /* Stop kernel module */
+        /* De-init accelerator */
+        printf("Stopping accelerator\n");
+
+        /* Close flows map FD in kmod */
+        err = kmod_set_map_fd(-1);
+        if (err)
+        {
+            printf("Could not load kernel module.\n");
+            err = -1;
+            goto exit;
+        }
+
         /* Close all pinned objects */
+        // TODO: call unlink/'rm' on flows map
     }
     else
     {
         printf("No command specified.\n");
     }
 
+exit:
+    deinit_netlink();
     return err;
 }

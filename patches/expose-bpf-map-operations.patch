@@ -10,11 +10,11 @@
  	map = __bpf_map_get(f);
  	if (IS_ERR(map))
  		return PTR_ERR(map);
-@@ -1087,6 +1089,111 @@ err_put:
+@@ -1087,6 +1089,115 @@ err_put:
  	return err;
  }
  
-+int accel_map_test_fn(int ufd)
++bool accel_map_get_fd(int ufd, struct fd *dst)
 +{
 +	struct bpf_map *map;
 +	struct fd f;
@@ -22,15 +22,19 @@
 +	printk("User FD %d\n", ufd);
 +	f = fdget(ufd);
 +	printk("Kernel FD %p %u\n", f.file, f.flags);
++
 +	map = __bpf_map_get(f);
++	dst->file = f.file;
++	dst->flags = f.flags;
++
 +	if (IS_ERR(map))
 +	{
 +		printk("IS ERROR == TRUE\n");
-+		return -1;
++		return 0;
 +	}
 +
 +	printk("Found map !!!!!\n");
-+	return 0;
++	return 1;
 +}
 +
 +EXPORT_SYMBOL(accel_map_test_fn);
