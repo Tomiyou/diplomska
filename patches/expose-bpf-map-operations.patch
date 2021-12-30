@@ -127,13 +127,16 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
-@@ -1153,6 +1258,77 @@ err_put:
+@@ -1153,6 +1258,81 @@ err_put:
  	return err;
  }
  
-+static int accel_map_update_elem(struct fd f, void *key, void *value, u64 flags)
++static int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags)
 +{
++	bpfptr_t uvalue = make_bpfptr(_value, true);
 +	struct bpf_map *map;
++	u32 value_size;
++	void *value;
 +
 +	/*
 +	 *		**BPF_F_LOCK**
@@ -171,7 +174,6 @@
 +		goto err_put;
 +	} */
 +
-+	/* No need to copy value from userspace anymore
 +	if (map->map_type == BPF_MAP_TYPE_PERCPU_HASH ||
 +	    map->map_type == BPF_MAP_TYPE_LRU_PERCPU_HASH ||
 +	    map->map_type == BPF_MAP_TYPE_PERCPU_ARRAY ||
@@ -181,31 +183,33 @@
 +		value_size = map->value_size;
 +
 +	err = -ENOMEM;
-+	value = kmalloc(value_size, GFP_USER | __GFP_NOWARN);
++	value = kmalloc(value_size, __GFP_NOWARN);
 +	if (!value)
-+		goto free_key;
++		return err;
 +
 +	err = -EFAULT;
-+	if (copy_from_bpfptr(value, uvalue, value_size) != 0)
-+		goto free_value; */
++	if (copy_from_bpfptr(value, uvalue, value_size) != 0) {
++		printk("accel_map_update_elem: copy_from_bpfptr failed.\n");
++		goto free_value;
++	}
 +
-+	return bpf_map_update_value(map, f, key, value, flags);
++	err = bpf_map_update_value(map, f, key, value, flags);
 +
-+/* No need to free any variables, since they are all
-+   owned by the caller
 +free_value:
 +	kfree(value);
++/* No need to free any variables, since they are all
++   owned by the caller
 +free_key:
 +	kfree(key);
 +err_put:
-+	fdput(f);
-+	return err; */
++	fdput(f); */
++	return err;
 +}
 +
  #define BPF_MAP_DELETE_ELEM_LAST_FIELD key
  
  static int map_delete_elem(union bpf_attr *attr)
-@@ -1205,6 +1381,52 @@ err_put:
+@@ -1205,6 +1385,52 @@ err_put:
  	return err;
  }
  
