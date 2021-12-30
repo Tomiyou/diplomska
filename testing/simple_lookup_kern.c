@@ -3,6 +3,7 @@
 #include <linux/module.h>
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
+#include <linux/bpf.h>
 
 #define NETLINK_TEST 17
 
