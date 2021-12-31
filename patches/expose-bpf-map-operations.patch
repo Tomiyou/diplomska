@@ -127,11 +127,11 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
-@@ -1153,6 +1258,81 @@ err_put:
+@@ -1153,6 +1258,83 @@ err_put:
  	return err;
  }
  
-+static int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags)
++int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags)
 +{
 +	bpfptr_t uvalue = make_bpfptr(_value, true);
 +	struct bpf_map *map;
@@ -206,14 +206,16 @@
 +	return err;
 +}
 +
++EXPORT_SYMBOL(accel_map_update_elem);
++
  #define BPF_MAP_DELETE_ELEM_LAST_FIELD key
  
  static int map_delete_elem(union bpf_attr *attr)
-@@ -1205,6 +1385,52 @@ err_put:
+@@ -1205,6 +1387,54 @@ err_put:
  	return err;
  }
  
-+static int accel_map_delete_elem(struct fd f, void *key, u64 flags)
++int accel_map_delete_elem(struct fd f, void *key, u64 flags)
 +{
 +	struct bpf_map *map;
 +	int err;
@@ -259,16 +261,21 @@
 +	return err;
 +}
 +
++EXPORT_SYMBOL(accel_map_delete_elem);
++
  /* last field in 'union bpf_attr' used by this command */
  #define BPF_MAP_GET_NEXT_KEY_LAST_FIELD next_key
  
 --- a/linux/include/linux/bpf.h
 +++ b/linux/include/linux/bpf.h
-@@ -1292,6 +1292,7 @@ struct bpf_map *bpf_map_get_with_uref(u3
+@@ -1292,6 +1292,10 @@ struct bpf_map *bpf_map_get_with_uref(u3
  struct bpf_map *__bpf_map_get(struct fd f);
  void bpf_map_inc(struct bpf_map *map);
  void bpf_map_inc_with_uref(struct bpf_map *map);
-+int accel_map_test_fn(int ufd);
++bool accel_map_get_fd(int ufd, struct fd *dst);
++int accel_map_lookup_elem(struct fd f, void *key, void *value, u64 flags);
++int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags);
++int accel_map_delete_elem(struct fd f, void *key, u64 flags);
  struct bpf_map * __must_check bpf_map_inc_not_zero(struct bpf_map *map);
  void bpf_map_put_with_uref(struct bpf_map *map);
  void bpf_map_put(struct bpf_map *map);
