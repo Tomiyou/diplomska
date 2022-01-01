@@ -127,7 +127,7 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
-@@ -1153,6 +1258,83 @@ err_put:
+@@ -1153,6 +1258,84 @@ err_put:
  	return err;
  }
  
@@ -137,6 +137,7 @@
 +	struct bpf_map *map;
 +	u32 value_size;
 +	void *value;
++	int err;
 +
 +	/*
 +	 *		**BPF_F_LOCK**
@@ -211,7 +212,7 @@
  #define BPF_MAP_DELETE_ELEM_LAST_FIELD key
  
  static int map_delete_elem(union bpf_attr *attr)
-@@ -1205,6 +1387,54 @@ err_put:
+@@ -1205,6 +1388,54 @@ err_put:
  	return err;
  }
  
