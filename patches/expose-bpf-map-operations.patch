@@ -133,7 +133,7 @@
  
 +int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags)
 +{
-+	bpfptr_t uvalue = make_bpfptr(_value, true);
++	bpfptr_t uvalue = make_bpfptr((u64) _value, true);
 +	struct bpf_map *map;
 +	u32 value_size;
 +	void *value;
