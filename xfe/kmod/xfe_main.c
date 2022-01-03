@@ -72,6 +72,11 @@ static void __exit xfe_exit(void)
     {   
         netlink_kernel_release(nl_sock);
     }
+    if (fd_valid)
+    {
+        printk(KERN_INFO "xfe netlink: Closing FD\n");
+        fdput(f);
+    }
 
     printk(KERN_INFO "XFE exit\n");
 }
