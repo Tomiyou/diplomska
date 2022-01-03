@@ -55,10 +55,10 @@ static int __init xfe_init(void)
     };
 
     nl_sock = netlink_kernel_create(&init_net, NETLINK_TEST, &cfg);
-    if (!nl_sock)
+    if (nl_sock == NULL)
     {
         printk(KERN_ALERT "Error creating socket.\n");
-        return -10;
+        return -1;
     }
 
     printk(KERN_INFO "XFE init\n");
@@ -68,6 +68,11 @@ static int __init xfe_init(void)
 
 static void __exit xfe_exit(void)
 {
+    if (nl_sock)
+    {   
+        netlink_kernel_release(nl_sock);
+    }
+
     printk(KERN_INFO "XFE exit\n");
 }
 
