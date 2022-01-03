@@ -9,6 +9,8 @@ clean)
 	rm *.deb || true
     rm *.gz || true
     rm *.dsc || true
+    rm linux-upstream_* || true
+    rm build.log || true
     ;;
 linux)
     quilt push -a
