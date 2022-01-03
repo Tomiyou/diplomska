@@ -122,6 +122,8 @@ static int init_netlink()
     dest_addr.nl_family = AF_NETLINK;
     dest_addr.nl_pid = 0;    /* For Linux Kernel */
     dest_addr.nl_groups = 0; /* unicast */
+
+    return 0;
 }
 
 static int deinit_netlink()
@@ -182,7 +184,7 @@ int kmod_set_map_fd(int map_fd)
     /* Send map FD down to kernel module */
     if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
     {
-        printf("Could not initialize netlink.\n");
+        printf("Could not send netlink message.\n");
         return -1;
     }
 
@@ -245,7 +247,7 @@ int main(int argc, char **argv)
         err = kmod_set_map_fd(map_fd);
         if (err)
         {
-            printf("Could not load kernel module.\n");
+            printf("Could send FD to kernel module.\n");
             err = -1;
             goto exit;
         }

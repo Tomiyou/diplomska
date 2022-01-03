@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
+#include <linux/bpf.h>
 
 #include "xfe_types.h"
 
