@@ -42,7 +42,7 @@
  	map = __bpf_map_get(f);
  	if (IS_ERR(map))
  		return PTR_ERR(map);
-@@ -1087,6 +1114,84 @@ err_put:
+@@ -1087,6 +1114,85 @@ err_put:
  	return err;
  }
  
@@ -68,6 +68,7 @@
 +
 +	/* We resolve the kernel map FD at the start instead of each time
 +	f = fdget(ufd); */
++	printk("Kernel FD %p %u\n", f.file, f.flags);
 +	map = __bpf_map_get(f);
 +	if (IS_ERR(map)) {
 +		printk("accel_map_lookup_elem: Map not found.\n");
@@ -127,7 +128,7 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
-@@ -1153,6 +1258,84 @@ err_put:
+@@ -1153,6 +1259,84 @@ err_put:
  	return err;
  }
  
@@ -212,7 +213,7 @@
  #define BPF_MAP_DELETE_ELEM_LAST_FIELD key
  
  static int map_delete_elem(union bpf_attr *attr)
-@@ -1205,6 +1388,55 @@ err_put:
+@@ -1205,6 +1389,55 @@ err_put:
  	return err;
  }
  
