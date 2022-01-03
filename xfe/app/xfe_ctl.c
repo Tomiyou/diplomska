@@ -191,6 +191,22 @@ int kmod_set_map_fd(int map_fd)
     return 0;
 }
 
+int kmod_lookup_elem(unsigned int key)
+{
+    struct xfe_nl_msg xfe_msg = {
+        XFE_MSG_MAP_LOOKUP,
+        key};
+
+    /* Send map FD down to kernel module */
+    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
+    {
+        printf("Could not send netlink message.\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     char *xfe_obj_path = getenv("XFE_OBJ_PATH");
@@ -247,13 +263,23 @@ int main(int argc, char **argv)
         err = kmod_set_map_fd(map_fd);
         if (err)
         {
-            printf("Could send FD to kernel module.\n");
+            printf("Could not send FD to kernel module.\n");
             err = -1;
             goto exit;
         }
 
         /* Finish */
         close(map_fd);
+    }
+    else if (strncmp(cmd, "lookup", 6) == 0)
+    {
+        err = kmod_lookup_elem(37);
+        if (err)
+        {
+            printf("Could not send lookup request to kernel module.\n");
+            err = -1;
+            goto exit;
+        }
     }
     else if (strncmp(cmd, "attach", 6) == 0)
     {

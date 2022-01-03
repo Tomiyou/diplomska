@@ -28,7 +28,7 @@ static void netlink_recv_msg(struct sk_buff *skb)
 
     if (msg->msg_type == XFE_MSG_MAP_FD) {
         int user_fd = msg->msg_value;
-        printk(KERN_INFO "xfe netlink: Received FD %u\n", user_fd);
+        printk(KERN_INFO "xfe netlink: Received FD %d\n", user_fd);
 
         /* Close old FD */
         if (fd_valid)
@@ -43,6 +43,19 @@ static void netlink_recv_msg(struct sk_buff *skb)
         }
 
         initialized = true;
+    } else if (msg->msg_type == XFE_MSG_MAP_LOOKUP) {
+        __u32 key = msg->msg_value;
+        struct xfe_flow flow;
+        int err;
+
+        printk(KERN_INFO "xfe netlink: Looking up key %u\n", key);
+
+        err = accel_map_lookup_elem(f, &key, &flow, 0);
+        if (err != 0) {
+            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FAILED %d\n", err);
+        } else {
+            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %lu\n", flow.stats);
+        }
     } else {
         printk(KERN_INFO "xfe netlink: Unknown message type %u\n", msg->msg_value);
     }
