@@ -1,10 +1,10 @@
 --- a/linux/kernel/bpf/syscall.c
 +++ b/linux/kernel/bpf/syscall.c
-@@ -1020,6 +1020,51 @@ static void *___bpf_copy_key(bpfptr_t uk
+@@ -1020,6 +1020,75 @@ static void *___bpf_copy_key(bpfptr_t uk
  	return NULL;
  }
  
-+bool accel_map_get_fd(int ufd, struct fd *dst)
++bool accel_map_get_fd(unsigned int ufd, struct fd *dst)
 +{
 +	struct bpf_map *map;
 +	struct fd f;
@@ -29,6 +29,30 @@
 +
 +EXPORT_SYMBOL(accel_map_get_fd);
 +
++bool accel_map_get_fd_flex(unsigned int ufd, struct fd *dst)
++{
++	struct file *f = fget(ufd);
++	struct bpf_map *map;
++
++	printk("User FD %d\n", ufd);
++
++	dst->file = f;
++	dst->flags = FDPUT_FPUT;
++	printk("Kernel FD %p %u\n", f->file, f->flags);
++
++	map = __bpf_map_get(*f);
++	if (IS_ERR(map))
++	{
++		printk("IS ERROR 1 == TRUE\n");
++		return 0;
++	}
++
++	printk("Found map OMGOMG !!!!!\n");
++	return 1;
++}
++
++EXPORT_SYMBOL(accel_map_get_fd_flex);
++
 +bool accel_map_test_fd(struct fd f)
 +{
 +	struct bpf_map *map;
@@ -52,7 +76,7 @@
  /* last field in 'union bpf_attr' used by this command */
  #define BPF_MAP_LOOKUP_ELEM_LAST_FIELD flags
  
-@@ -1040,7 +1085,9 @@ static int map_lookup_elem(union bpf_att
+@@ -1040,7 +1109,9 @@ static int map_lookup_elem(union bpf_att
  	if (attr->flags & ~BPF_F_LOCK)
  		return -EINVAL;
  
@@ -62,7 +86,7 @@
  	map = __bpf_map_get(f);
  	if (IS_ERR(map))
  		return PTR_ERR(map);
-@@ -1087,6 +1134,85 @@ err_put:
+@@ -1087,6 +1158,85 @@ err_put:
  	return err;
  }
  
@@ -148,7 +172,7 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
-@@ -1153,6 +1279,84 @@ err_put:
+@@ -1153,6 +1303,84 @@ err_put:
  	return err;
  }
  
@@ -233,7 +257,7 @@
  #define BPF_MAP_DELETE_ELEM_LAST_FIELD key
  
  static int map_delete_elem(union bpf_attr *attr)
-@@ -1205,6 +1409,55 @@ err_put:
+@@ -1205,6 +1433,55 @@ err_put:
  	return err;
  }
  
@@ -291,11 +315,12 @@
  
 --- a/linux/include/linux/bpf.h
 +++ b/linux/include/linux/bpf.h
-@@ -1292,6 +1292,11 @@ struct bpf_map *bpf_map_get_with_uref(u3
+@@ -1292,6 +1292,12 @@ struct bpf_map *bpf_map_get_with_uref(u3
  struct bpf_map *__bpf_map_get(struct fd f);
  void bpf_map_inc(struct bpf_map *map);
  void bpf_map_inc_with_uref(struct bpf_map *map);
-+bool accel_map_get_fd(int ufd, struct fd *dst);
++bool accel_map_get_fd(unsigned int ufd, struct fd *dst);
++bool accel_map_get_fd_flex(unsigned int ufd, struct fd *dst);
 +bool accel_map_test_fd(struct fd f);
 +int accel_map_lookup_elem(struct fd f, void *key, void *value, u64 flags);
 +int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags);
