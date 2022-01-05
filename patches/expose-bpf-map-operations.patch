@@ -9,7 +9,7 @@
 +	struct bpf_map *map;
 +	struct fd f;
 +
-+	printk("User FD %d\n", ufd);
++	printk("User FD %u\n", ufd);
 +	f = fdget(ufd);
 +	printk("Kernel FD %p %u\n", f.file, f.flags);
 +
@@ -34,13 +34,13 @@
 +	struct file *f = fget(ufd);
 +	struct bpf_map *map;
 +
-+	printk("User FD %d\n", ufd);
++	printk("User FD %u\n", ufd);
 +
 +	dst->file = f;
 +	dst->flags = FDPUT_FPUT;
-+	printk("Kernel FD %p %u\n", f->file, f->flags);
++	printk("Kernel FD %p %u\n", dst->file, dst->flags);
 +
-+	map = __bpf_map_get(*f);
++	map = __bpf_map_get(*dst);
 +	if (IS_ERR(map))
 +	{
 +		printk("IS ERROR 1 == TRUE\n");
