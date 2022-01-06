@@ -12,7 +12,9 @@ struct sock *nl_sock = NULL;
 
 bool initialized = false;
 bool fd_valid = false;
+bool fd2_valid = false;
 struct fd f;
+struct fd f2;
 
 static void netlink_recv_msg(struct sk_buff *skb)
 {
@@ -36,10 +38,16 @@ static void netlink_recv_msg(struct sk_buff *skb)
             printk(KERN_INFO "xfe netlink: Closing old FD\n");
             fdput(f);
         }
+        if (fd2_valid)
+        {
+            printk(KERN_INFO "xfe netlink: Closing old FD2\n");
+            fdput(f2);
+        }
 
         /* If instructed, get new FD */
         if (user_fd >= 0) {
             fd_valid = accel_map_get_fd(user_fd, &f);
+            fd2_valid = accel_map_get_fd_flex(user_fd, &f2);
         }
 
         initialized = true;
@@ -49,8 +57,18 @@ static void netlink_recv_msg(struct sk_buff *skb)
         int err;
 
         printk(KERN_INFO "xfe netlink: Looking up key %u\n", key);
+        printk(KERN_INFO "Using 1st FD");
 
         err = accel_map_lookup_elem(f, &key, &flow, 0);
+        if (err != 0) {
+            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FAILED %d\n", err);
+        } else {
+            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %lu\n", flow.stats);
+        }
+
+        printk(KERN_INFO "Using 2nd FD");
+
+        err = accel_map_lookup_elem(f2, &key, &flow, 0);
         if (err != 0) {
             printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FAILED %d\n", err);
         } else {
