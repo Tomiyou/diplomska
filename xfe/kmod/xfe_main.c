@@ -12,9 +12,7 @@ struct sock *nl_sock = NULL;
 
 bool initialized = false;
 bool fd_valid = false;
-bool fd2_valid = false;
 struct fd f;
-struct fd f2;
 
 static void netlink_recv_msg(struct sk_buff *skb)
 {
@@ -38,16 +36,10 @@ static void netlink_recv_msg(struct sk_buff *skb)
             printk(KERN_INFO "xfe netlink: Closing old FD\n");
             fdput(f);
         }
-        if (fd2_valid)
-        {
-            printk(KERN_INFO "xfe netlink: Closing old FD2\n");
-            fdput(f2);
-        }
 
         /* If instructed, get new FD */
         if (user_fd >= 0) {
-            fd_valid = accel_map_get_fd(user_fd, &f);
-            fd2_valid = accel_map_get_fd_flex(user_fd, &f2);
+            fd_valid = accel_map_get_fd_flex(user_fd, &f);
         }
 
         initialized = true;
@@ -57,7 +49,6 @@ static void netlink_recv_msg(struct sk_buff *skb)
         int err;
 
         printk(KERN_INFO "xfe netlink: Looking up key %u\n", key);
-        printk(KERN_INFO "Using 1st FD");
 
         err = accel_map_lookup_elem(f, &key, &flow, 0);
         if (err != 0) {
@@ -65,14 +56,30 @@ static void netlink_recv_msg(struct sk_buff *skb)
         } else {
             printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %lu\n", flow.stats);
         }
+    } else if (msg->msg_type == XFE_MSG_MAP_DELETE) {
+        __u32 key = msg->msg_value;
+        int err;
 
-        printk(KERN_INFO "Using 2nd FD");
+        printk(KERN_INFO "xfe netlink: Deleting key %u\n", key);
 
-        err = accel_map_lookup_elem(f2, &key, &flow, 0);
+        err = accel_map_delete_elem(f, &key, 0);
         if (err != 0) {
-            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FAILED %d\n", err);
+            printk(KERN_INFO "xfe netlink: accel_map_delete_elem FAILED %d\n", err);
         } else {
-            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %lu\n", flow.stats);
+            printk(KERN_INFO "xfe netlink: accel_map_delete_elem SUCCEEDED");
+        }
+    } else if (msg->msg_type == XFE_MSG_MAP_UPDATE) {
+        __u32 key = msg->msg_value;
+        struct xfe_flow flow;
+        int err;
+
+        printk(KERN_INFO "xfe netlink: Inserting key %u and value %lu\n", key, flow.stats);
+
+        err = accel_map_update_elem(f, &key, &flow, 0);
+        if (err != 0) {
+            printk(KERN_INFO "xfe netlink: accel_map_update_elem FAILED %d\n", err);
+        } else {
+            printk(KERN_INFO "xfe netlink: accel_map_update_elem SUCCEEDED\n");
         }
     } else {
         printk(KERN_INFO "xfe netlink: Unknown message type %u\n", msg->msg_value);
@@ -100,7 +107,7 @@ static int __init xfe_init(void)
 static void __exit xfe_exit(void)
 {
     if (nl_sock)
-    {   
+    {
         netlink_kernel_release(nl_sock);
     }
     if (fd_valid)

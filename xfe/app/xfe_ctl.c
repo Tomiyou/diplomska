@@ -207,6 +207,38 @@ int kmod_lookup_elem(unsigned int key)
     return 0;
 }
 
+int kmod_delete_elem(unsigned int key)
+{
+    struct xfe_nl_msg xfe_msg = {
+        XFE_MSG_MAP_DELETE,
+        key};
+
+    /* Send map FD down to kernel module */
+    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
+    {
+        printf("Could not send netlink message.\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+int kmod_update_elem(unsigned int key)
+{
+    struct xfe_nl_msg xfe_msg = {
+        XFE_MSG_MAP_UPDATE,
+        key};
+
+    /* Send map FD down to kernel module */
+    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
+    {
+        printf("Could not send netlink message.\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     char *xfe_obj_path = getenv("XFE_OBJ_PATH");
@@ -277,6 +309,26 @@ int main(int argc, char **argv)
         if (err)
         {
             printf("Could not send lookup request to kernel module.\n");
+            err = -1;
+            goto exit;
+        }
+    }
+    else if (strncmp(cmd, "delete", 6) == 0)
+    {
+        err = kmod_delete_elem(37);
+        if (err)
+        {
+            printf("Could not send delete request to kernel module.\n");
+            err = -1;
+            goto exit;
+        }
+    }
+    else if (strncmp(cmd, "update", 6) == 0)
+    {
+        err = kmod_update_elem(37);
+        if (err)
+        {
+            printf("Could not send update request to kernel module.\n");
             err = -1;
             goto exit;
         }
