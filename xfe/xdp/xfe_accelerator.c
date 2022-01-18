@@ -1,6 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+#include <stddef.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/in.h>
+#include <linux/udp.h>
+
+/* BPF stuff */
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 
 #include "xfe_types.h"
 
@@ -22,26 +30,119 @@ struct bpf_map_def SEC("maps") xfe_flows = {
 #define lock_xadd(ptr, val)	((void) __sync_fetch_and_add(ptr, val))
 #endif
 
-static int lookup_flow_entry(struct xdp_md *ctx)
+/* Map hash lookup */
+#define SFE_IPV4_CONNECTION_HASH_SHIFT 12
+#define SFE_IPV4_CONNECTION_HASH_SIZE (1 << SFE_IPV4_CONNECTION_HASH_SHIFT)
+#define SFE_IPV4_CONNECTION_HASH_MASK (SFE_IPV4_CONNECTION_HASH_SIZE - 1)
+
+static __always_inline __u32 get_flow_hash(
+	__u32 match_if_index,
+	unsigned char match_dst_mac[ETH_ALEN],
+	__be16 match_eth_proto,
+	__u8   match_ip_proto,
+	__be32 match_src_ip,
+	__be32 match_dest_ip,
+	__be16 match_src_port,
+	__be16 match_dest_port
+)
 {
-    __u32 key = 15;
+	size_t dev_addr = (size_t)dev;
+	u32 hash = ((u32)dev_addr) ^ ntohl(src_ip ^ dest_ip) ^ protocol ^ ntohs(src_port ^ dest_port);
+	return ((hash >> SFE_IPV4_CONNECTION_HASH_SHIFT) ^ hash) & SFE_IPV4_CONNECTION_HASH_MASK;
+}
 
-	/* Lookup in kernel BPF-side return pointer to actual data record */
-	struct xfe_flow *flow = bpf_map_lookup_elem(&xfe_flows, &key);
-	if (!flow)
-		return 0;
+/* Parse ethernet header */
+static __always_inline struct ethhdr *parse_ethhdr(void *data_start,
+						   void *data_end)
+{
+	struct ethhdr *eth_header = data_start;
+	int hdr_size = sizeof(*eth_header);
 
-	return 1;
+	/* Byte-count bounds check; check if data_start + size of header
+	 * is after data_end. */
+	if (data_start + hdr_size > data_end)
+		return NULL;
+
+	return eth_header; /* network-byte-order */
+}
+
+/* Parse IPv4 header */
+static __always_inline struct iphdr *parse_iphdr(void *data_start,
+						 void *data_end)
+{
+	struct iphdr *ip_header = data_start;
+	int hdr_size = sizeof(*ip_header);
+
+	/* Byte-count bounds check; check if data_start + size of header
+	 * is after data_end. */
+	if (data_start + hdr_size > data_end)
+		return NULL;
+
+	return ip_header; /* network-byte-order */
+}
+
+/* Parse UDP header */
+static __always_inline struct udphdr *parse_udphdr(void *data_start,
+						   void *data_end)
+{
+	struct udphdr *udp_header = data_start;
+	int hdr_size = sizeof(*udp_header);
+
+	/* Byte-count bounds check; check if data_start + size of header
+	 * is after data_end. */
+	if (data_start + hdr_size > data_end)
+		return NULL;
+
+	return udp_header; /* network-byte-order */
 }
 
 SEC("xfe_ingress")
 int xfe_ingress_fn(struct xdp_md *ctx)
 {
-    int flow_found = lookup_flow_entry(ctx);
-    if (flow_found)
-        bpf_printk("Found XFE flow!\n");
-    
-	return XDP_PASS;
+	void *data_start = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+	void *frame_pointer = data_start;
+
+	/* Packet headers */
+	struct ethhdr *eth_header;
+	struct iphdr *ip_header;
+	struct udphdr *udp_header;
+
+	/* Default action */
+	__u32 action = XDP_PASS;
+
+	/* Parse ethernet header */
+	eth_header = parse_ethhdr(frame_pointer, data_end);
+	if (eth_header == NULL)
+		goto out;
+	/* Move frame pointer */
+	frame_pointer += sizeof(*eth_header);
+
+	/* Only allow IPv4 packets through */
+	if (eth_header->h_proto != bpf_htons(ETH_P_IP))
+		goto out;
+
+	/* Parse IPv4 header */
+	ip_header = parse_iphdr(frame_pointer, data_end);
+	if (eth_header == NULL)
+		goto out;
+	/* Move frame pointer */
+	frame_pointer += sizeof(*ip_header);
+
+	/* Only allow UDP packets through */
+	if (ip_header->protocol != bpf_htons(IPPROTO_UDP))
+		goto out;
+
+	/* Parse UDP header */
+	udp_header = parse_udphdr(frame_pointer, data_end);
+	if (eth_header == NULL)
+		goto out;
+	/* Move frame pointer */
+	frame_pointer += sizeof(*udp_header);
+
+	/* Ready to process UDP packet */
+out:
+	return action;
 }
 
 char _license[] SEC("license") = "GPL";
