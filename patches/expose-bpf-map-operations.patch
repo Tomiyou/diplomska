@@ -172,13 +172,18 @@
  
  #define BPF_MAP_UPDATE_ELEM_LAST_FIELD flags
  
-@@ -1153,6 +1303,84 @@ err_put:
+@@ -1153,6 +1303,89 @@ err_put:
  	return err;
  }
  
++static inline __u64 ptr_to_u64(const void *ptr)
++{
++	return (__u64) (unsigned long) ptr;
++}
++
 +int accel_map_update_elem(struct fd f, void *key, void *_value, u64 flags)
 +{
-+	bpfptr_t uvalue = make_bpfptr((u64) _value, true);
++	bpfptr_t uvalue = make_bpfptr(ptr_to_u64(_value), true);
 +	struct bpf_map *map;
 +	u32 value_size;
 +	void *value;
@@ -257,7 +262,7 @@
  #define BPF_MAP_DELETE_ELEM_LAST_FIELD key
  
  static int map_delete_elem(union bpf_attr *attr)
-@@ -1205,6 +1433,55 @@ err_put:
+@@ -1205,6 +1438,55 @@ err_put:
  	return err;
  }
  
