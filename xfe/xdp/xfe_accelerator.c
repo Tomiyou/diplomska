@@ -31,54 +31,52 @@ struct bpf_map_def SEC("maps") xfe_flows = {
 #endif
 
 /* Map hash lookup */
-#define SFE_IPV4_CONNECTION_HASH_SHIFT 12
-#define SFE_IPV4_CONNECTION_HASH_SIZE (1 << SFE_IPV4_CONNECTION_HASH_SHIFT)
-#define SFE_IPV4_CONNECTION_HASH_MASK (SFE_IPV4_CONNECTION_HASH_SIZE - 1)
+#define HASH_SHIFT 12
+#define HASH_SIZE (1 << HASH_SHIFT)
+#define HASH_MASK (HASH_SIZE - 1)
 
 static __always_inline __u32 get_flow_hash(
-	__u32 match_if_index,
-	unsigned char match_dst_mac[ETH_ALEN],
-	__be16 match_eth_proto,
-	__u8   match_ip_proto,
-	__be32 match_src_ip,
-	__be32 match_dest_ip,
-	__be16 match_src_port,
-	__be16 match_dest_port
+	__u32 if_index,
+	__be16 eth_proto,
+	__u8   ip_proto,
+	__be32 src_ip,
+	__be32 dest_ip,
+	__be16 src_port,
+	__be16 dest_port
 )
 {
-	size_t dev_addr = (size_t)dev;
-	u32 hash = ((u32)dev_addr) ^ ntohl(src_ip ^ dest_ip) ^ protocol ^ ntohs(src_port ^ dest_port);
-	return ((hash >> SFE_IPV4_CONNECTION_HASH_SHIFT) ^ hash) & SFE_IPV4_CONNECTION_HASH_MASK;
+	__u32 hash = if_index ^ bpf_ntohl(src_ip ^ dest_ip) ^ bpf_ntohs(eth_proto) ^ ip_proto ^ bpf_ntohs(src_port ^ dest_port);
+	return ((hash >> HASH_SHIFT) ^ hash) & HASH_MASK;
 }
 
 /* Parse ethernet header */
 static __always_inline struct ethhdr *parse_ethhdr(void *data_start,
 						   void *data_end)
 {
-	struct ethhdr *eth_header = data_start;
-	int hdr_size = sizeof(*eth_header);
+	struct ethhdr *eth_hdr = data_start;
+	int hdr_size = sizeof(*eth_hdr);
 
 	/* Byte-count bounds check; check if data_start + size of header
 	 * is after data_end. */
 	if (data_start + hdr_size > data_end)
 		return NULL;
 
-	return eth_header; /* network-byte-order */
+	return eth_hdr; /* network-byte-order */
 }
 
 /* Parse IPv4 header */
 static __always_inline struct iphdr *parse_iphdr(void *data_start,
 						 void *data_end)
 {
-	struct iphdr *ip_header = data_start;
-	int hdr_size = sizeof(*ip_header);
+	struct iphdr *ip_hdr = data_start;
+	int hdr_size = sizeof(*ip_hdr);
 
 	/* Byte-count bounds check; check if data_start + size of header
 	 * is after data_end. */
 	if (data_start + hdr_size > data_end)
 		return NULL;
 
-	return ip_header; /* network-byte-order */
+	return ip_hdr; /* network-byte-order */
 }
 
 /* Parse UDP header */
@@ -96,6 +94,41 @@ static __always_inline struct udphdr *parse_udphdr(void *data_start,
 	return udp_header; /* network-byte-order */
 }
 
+static __always_inline struct xfe_flow *lookup_flow(
+	__u32 if_index,
+	unsigned char dst_mac[ETH_ALEN],
+	__be16 eth_proto,
+	__u8   ip_proto,
+	__be32 src_ip,
+	__be32 dest_ip,
+	__be16 src_port,
+	__be16 dest_port
+)
+{
+	struct xfe_flow *flow;
+	__u32 hash = get_flow_hash(if_index, eth_proto,
+				   ip_proto, src_ip, dest_ip,
+				   src_port, dest_port);
+
+	flow = bpf_map_lookup_elem(&xfe_flows, &hash);
+	if (
+		flow->match_if_index == if_index &&
+		__builtin_memcmp(flow->match_dst_mac, dst_mac, ETH_ALEN),
+		flow->match_eth_proto == eth_proto &&
+		flow->match_ip_proto == ip_proto &&
+		flow->match_src_ip == src_ip &&
+		flow->match_dest_ip == dest_ip &&
+		flow->match_src_port == src_port &&
+		flow->match_dest_port == dest_port
+	)
+	{
+		bpf_printk("Hash correct, but comparison wrong\n");
+		return NULL;
+	}
+
+	return flow;
+}
+
 SEC("xfe_ingress")
 int xfe_ingress_fn(struct xdp_md *ctx)
 {
@@ -104,43 +137,58 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	void *frame_pointer = data_start;
 
 	/* Packet headers */
-	struct ethhdr *eth_header;
-	struct iphdr *ip_header;
-	struct udphdr *udp_header;
+	struct ethhdr *eth_hdr;
+	struct iphdr *ip_hdr;
+	struct udphdr *udp_hdr;
+	struct xfe_flow *flow;
 
 	/* Default action */
 	__u32 action = XDP_PASS;
 
 	/* Parse ethernet header */
-	eth_header = parse_ethhdr(frame_pointer, data_end);
-	if (eth_header == NULL)
+	eth_hdr = parse_ethhdr(frame_pointer, data_end);
+	if (eth_hdr == NULL)
 		goto out;
 	/* Move frame pointer */
-	frame_pointer += sizeof(*eth_header);
+	frame_pointer += sizeof(*eth_hdr);
 
 	/* Only allow IPv4 packets through */
-	if (eth_header->h_proto != bpf_htons(ETH_P_IP))
+	if (eth_hdr->h_proto != bpf_htons(ETH_P_IP))
 		goto out;
 
 	/* Parse IPv4 header */
-	ip_header = parse_iphdr(frame_pointer, data_end);
-	if (eth_header == NULL)
+	ip_hdr = parse_iphdr(frame_pointer, data_end);
+	if (ip_hdr == NULL)
 		goto out;
 	/* Move frame pointer */
-	frame_pointer += sizeof(*ip_header);
+	frame_pointer += sizeof(*ip_hdr);
 
 	/* Only allow UDP packets through */
-	if (ip_header->protocol != bpf_htons(IPPROTO_UDP))
+	if (ip_hdr->protocol != bpf_htons(IPPROTO_UDP))
 		goto out;
 
 	/* Parse UDP header */
-	udp_header = parse_udphdr(frame_pointer, data_end);
-	if (eth_header == NULL)
+	udp_hdr = parse_udphdr(frame_pointer, data_end);
+	if (udp_hdr == NULL)
 		goto out;
 	/* Move frame pointer */
-	frame_pointer += sizeof(*udp_header);
+	frame_pointer += sizeof(*udp_hdr);
 
 	/* Ready to process UDP packet */
+	flow = lookup_flow(ctx->ingress_ifindex, eth_hdr->h_dest, eth_hdr->h_proto,
+			   ip_hdr->protocol, ip_hdr->saddr, ip_hdr->daddr,
+			   udp_hdr->source, udp_hdr->dest);
+	if (!flow)
+	{
+		bpf_printk("Flow lookup error, IP: %x -> %x (PORT: %x -> %x)\n",
+			   ntohl(ip_hdr->saddr), ntohl(ip_hdr->daddr),
+			   ntohs(udp_hdr->source), ntohs(udp_hdr->dest));
+		goto out;
+	}
+
+	bpf_printk("Successful flow lookup, IP: %x -> %x (PORT: %x -> %x)\n",
+		   ntohl(ip_hdr->saddr), ntohl(ip_hdr->daddr),
+		   ntohs(udp_hdr->source), ntohs(udp_hdr->dest));
 out:
 	return action;
 }
