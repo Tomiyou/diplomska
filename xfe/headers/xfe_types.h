@@ -1,5 +1,6 @@
 #include <linux/if_ether.h>
 #include <linux/bpf.h>
+#include <stdbool.h>
 
 enum xfe_nl_msg_type {
 	XFE_MSG_MAP_FD,
@@ -40,8 +41,8 @@ struct xfe_flow {
 	__be16 apply_dest_port;			/* Destination port/connection ident */
 
 	/* Stats */
-	u32 rx_packet_count;
-	u32 rx_byte_count;
+	__u32 rx_packet_count;
+	__u32 rx_byte_count;
 
 	/* QoS information */
 	__u8 tos;

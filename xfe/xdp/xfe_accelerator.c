@@ -20,7 +20,7 @@ struct bpf_map_def SEC("maps") xfe_flows = {
 	.type        = BPF_MAP_TYPE_HASH,
 	.key_size    = sizeof(__u32),
 	.value_size  = sizeof(struct xfe_flow),
-	.max_entries = 254,
+	.max_entries = 254, /* TODO: change this to something bigger */
 };
 
 /* LLVM maps __sync_fetch_and_add() as a built-in function to the BPF atomic add
@@ -181,14 +181,14 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	if (!flow)
 	{
 		bpf_printk("Flow lookup error, IP: %x -> %x (PORT: %x -> %x)\n",
-			   ntohl(ip_hdr->saddr), ntohl(ip_hdr->daddr),
-			   ntohs(udp_hdr->source), ntohs(udp_hdr->dest));
+			   bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
+			   bpf_ntohs(udp_hdr->source), bpf_ntohs(udp_hdr->dest));
 		goto out;
 	}
 
 	bpf_printk("Successful flow lookup, IP: %x -> %x (PORT: %x -> %x)\n",
-		   ntohl(ip_hdr->saddr), ntohl(ip_hdr->daddr),
-		   ntohs(udp_hdr->source), ntohs(udp_hdr->dest));
+		   bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
+		   bpf_ntohs(udp_hdr->source), bpf_ntohs(udp_hdr->dest));
 out:
 	return action;
 }
