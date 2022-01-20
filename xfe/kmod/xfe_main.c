@@ -54,7 +54,7 @@ static void netlink_recv_msg(struct sk_buff *skb)
         if (err != 0) {
             printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FAILED %d\n", err);
         } else {
-            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %lu\n", flow.stats);
+            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %u\n", flow.rx_packet_count);
         }
     } else if (msg->msg_type == XFE_MSG_MAP_DELETE) {
         __u32 key = msg->msg_value;
@@ -73,7 +73,7 @@ static void netlink_recv_msg(struct sk_buff *skb)
         struct xfe_flow flow;
         int err;
 
-        printk(KERN_INFO "xfe netlink: Inserting key %u and value %lu\n", key, flow.stats);
+        printk(KERN_INFO "xfe netlink: Inserting key %u and value %u\n", key, flow.rx_packet_count);
 
         err = accel_map_update_elem(f, &key, &flow, 0);
         if (err != 0) {

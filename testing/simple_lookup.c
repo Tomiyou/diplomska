@@ -7,11 +7,8 @@
 int main() {
     int err;
     int map_fd;
-    __u32 key = 37;
+    __u32 key = 5;
     struct xfe_flow value;
-    struct xfe_flow _value = {
-        .stats = 25
-    };
 
     map_fd = bpf_obj_get("/sys/fs/bpf/xfe/xfe_flows");
     if (map_fd < 0) {
@@ -19,12 +16,12 @@ int main() {
         return -1;
     }
 
-    err = bpf_map_update_elem(map_fd, &key, &_value, 0);
-    if (err != 0) {
-        printf("Error occured during update\n");
-        close(map_fd);
-        return -1;
-    }
+    // err = bpf_map_update_elem(map_fd, &key, &_value, 0);
+    // if (err != 0) {
+    //     printf("Error occured during update\n");
+    //     close(map_fd);
+    //     return -1;
+    // }
 
     err = bpf_map_lookup_elem(map_fd, &key, &value);
     if (err != 0) {
@@ -33,7 +30,7 @@ int main() {
         return -1;
     }
 
-    printf("Looked up value: %d\n", value.stats);
+    printf("Looked up value: %d\n", value.rx_packet_count);
 
     close(map_fd);
 

@@ -28,13 +28,12 @@ struct xfe_flow {
 	__be16 match_dest_port;			/* Destination port/connection ident */
 
 	/* Remember if we need to do NAT */
-	bool do_xlate;
+	bool is_bridged;
 
 	/* Fields for translating a packet */
 	__u32 dest_if_index;			/* Network device */
+	unsigned char apply_src_mac[ETH_ALEN];	/* Source MAC */
 	unsigned char apply_dst_mac[ETH_ALEN];	/* Destination MAC */
-	__be16 apply_eth_proto;			/* Ethernet protocol */
-	__u8   apply_ip_proto;			/* IP protocol */
 	__be32 apply_src_ip;			/* Source IP address */
 	__be32 apply_dest_ip;			/* Destination IP address */
 	__be16 apply_src_port;			/* Source port/connection ident */
