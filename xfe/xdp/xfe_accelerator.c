@@ -75,24 +75,24 @@ static __always_inline struct udphdr *parse_udphdr(void *data_start,
 	return udp_header; /* network-byte-order */
 }
 
-/* Map hash lookup */
-#define HASH_SHIFT 12
-#define HASH_SIZE (1 << HASH_SHIFT)
-#define HASH_MASK (HASH_SIZE - 1)
+// /* Map hash lookup */
+// #define HASH_SHIFT 12
+// #define HASH_SIZE (1 << HASH_SHIFT)
+// #define HASH_MASK (HASH_SIZE - 1)
 
-static __always_inline __u32 get_flow_hash(
-	__u32 if_index,
-	__be16 eth_proto,
-	__u8   ip_proto,
-	__be32 src_ip,
-	__be32 dest_ip,
-	__be16 src_port,
-	__be16 dest_port
-)
-{
-	__u32 hash = if_index ^ bpf_ntohl(src_ip ^ dest_ip) ^ bpf_ntohs(eth_proto) ^ ip_proto ^ bpf_ntohs(src_port ^ dest_port);
-	return ((hash >> HASH_SHIFT) ^ hash) & HASH_MASK;
-}
+// static __always_inline __u32 get_flow_hash(
+// 	__u32 if_index,
+// 	__be16 eth_proto,
+// 	__u8   ip_proto,
+// 	__be32 src_ip,
+// 	__be32 dest_ip,
+// 	__be16 src_port,
+// 	__be16 dest_port
+// )
+// {
+// 	__u32 hash = if_index ^ bpf_ntohl(src_ip ^ dest_ip) ^ bpf_ntohs(eth_proto) ^ ip_proto ^ bpf_ntohs(src_port ^ dest_port);
+// 	return ((hash >> HASH_SHIFT) ^ hash) & HASH_MASK;
+// }
 
 static __always_inline struct xfe_flow *lookup_flow(
 	__u32 if_index,
@@ -106,19 +106,27 @@ static __always_inline struct xfe_flow *lookup_flow(
 )
 {
 	struct xfe_flow *flow;
-	__u32 hash = get_flow_hash(if_index, eth_proto,
-				   ip_proto, src_ip, dest_ip,
-				   src_port, dest_port);
+	// __u32 hash = get_flow_hash(0, eth_proto,
+	// 			   ip_proto, src_ip, dest_ip,
+	// 			   src_port, dest_port);
+	__u32 hash = 27;
 
 	flow = bpf_map_lookup_elem(&xfe_flows, &hash);
 	if (flow == NULL)
 	{
-		bpf_printk("bpf_map_lookup_elem returned NULL\n");
+		bpf_printk("bpf_map_lookup_elem returned NULL");
 		return NULL;
 	}
+	bpf_printk("Flow values, IP: %x -> %x (DST PORT: %x) ",
+		   bpf_ntohl(flow->match_src_ip), bpf_ntohl(flow->match_dest_ip),
+		   bpf_ntohs(flow->match_dest_port));
+	bpf_printk("%u, %x, %x",
+		   flow->match_if_index,
+		   bpf_ntohs(flow->match_eth_proto),
+		   flow->match_ip_proto);
 
 	if (
-		flow->match_if_index == if_index &&
+		/* flow->match_if_index == if_index && */
 		/* __builtin_memcmp(flow->match_dst_mac, dst_mac, 6), */
 		flow->match_eth_proto == eth_proto &&
 		flow->match_ip_proto == ip_proto &&
@@ -131,7 +139,7 @@ static __always_inline struct xfe_flow *lookup_flow(
 		return flow;
 	}
 
-	bpf_printk("Hash correct, but comparison wrong\n");
+	bpf_printk("Hash correct, but comparison wrong");
 	return NULL;
 }
 
@@ -179,23 +187,28 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		goto out;
 	/* Move frame pointer */
 	frame_pointer += sizeof(*udp_hdr);
+	bpf_printk("");
 
 	/* Ready to process UDP packet */
 	flow = lookup_flow(ctx->ingress_ifindex, eth_hdr->h_dest, eth_hdr->h_proto,
 			   ip_hdr->protocol, ip_hdr->saddr, ip_hdr->daddr,
-			   udp_hdr->source, udp_hdr->dest);
+			   /* udp_hdr->source */0, udp_hdr->dest);
 	if (!flow)
 	{
-		bpf_printk("Flow lookup failed.\n");
+		bpf_printk("Flow lookup failed.");
 	}
 	else
 	{
-		bpf_printk("Flow lookup SUCCEEDED!\n");
+		bpf_printk("Flow lookup SUCCEEDED!");
 	}
 
-	bpf_printk("Header values, IP: %x -> %x (DST PORT: %x)\n",
+	bpf_printk("Headerx values, IP: %x -> %x (DST PORT: %x) ",
 		   bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
 		   bpf_ntohs(udp_hdr->dest));
+	bpf_printk("%u, %x, %x",
+		   ctx->ingress_ifindex,
+		   bpf_ntohs(eth_hdr->h_proto),
+		   ip_hdr->protocol);
 out:
 	return action;
 }
