@@ -4,6 +4,7 @@
 #include <linux/ip.h>
 #include <linux/in.h>
 #include <linux/udp.h>
+#include <linux/filter.h>
 
 /* BPF stuff */
 #include <linux/bpf.h>
@@ -11,6 +12,14 @@
 #include <bpf/bpf_endian.h>
 
 #include "xfe_types.h"
+
+#undef bpf_printk
+#define bpf_printk(fmt, ...)                            \
+({                                                      \
+	static const char ____fmt[] = fmt;              \
+	bpf_trace_printk(____fmt, sizeof(____fmt),      \
+			 ##__VA_ARGS__);                \
+})
 
 /* Lesson: See how a map is defined.
  * - Here an array with XDP_ACTION_MAX (max_)entries are created.
@@ -211,6 +220,26 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		   ip_hdr->protocol);
 out:
 	return action;
+}
+
+SEC("netfilter_hook")
+int netfilter_hook_fn(struct __sk_buff *skb)
+{
+	struct xfe_nl_msg *msg = (struct xfe_nl_msg *)(unsigned long long)skb->data;
+	void *data_end = (void *)(unsigned long long)skb->data_end;
+	unsigned int data_size = sizeof(*msg);
+
+	bpf_printk("Hello from netfilter_hook! %p %p %u", msg, data_end, data_size);
+
+	/* Byte-count bounds check; check if msg + size of header
+	 * is after data_end. */
+	if (msg + data_size > data_end) {
+		bpf_printk("Case A!");
+		return 0;
+	}
+
+	bpf_printk("Message %u %u!", msg->msg_type, msg->msg_value);
+	return 0;
 }
 
 char _license[] SEC("license") = "GPL";

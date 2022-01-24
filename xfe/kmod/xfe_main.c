@@ -3,6 +3,7 @@
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
 #include <linux/bpf.h>
+#include <linux/filter.h>
 
 #include "xfe_types.h"
 
@@ -13,6 +14,7 @@ struct sock *nl_sock = NULL;
 bool initialized = false;
 bool fd_valid = false;
 struct fd f;
+int prog_fd;
 
 static void netlink_recv_msg(struct sk_buff *skb)
 {
@@ -27,21 +29,27 @@ static void netlink_recv_msg(struct sk_buff *skb)
     msg = (struct xfe_nl_msg *)nlmsg_data(nlh);
 
     if (msg->msg_type == XFE_MSG_MAP_FD) {
+        long unsigned int msg_len = sizeof(*msg);
         int user_fd = msg->msg_value;
         printk(KERN_INFO "xfe netlink: Received FD %d\n", user_fd);
 
-        /* Close old FD */
-        if (fd_valid)
-        {
-            printk(KERN_INFO "xfe netlink: Closing old FD\n");
-            fdput(f);
+        /* Allocate new SKB */
+        struct sk_buff *skb = alloc_skb(msg_len, GFP_ATOMIC);
+        memcpy(skb_put(skb, msg_len), msg, msg_len);
+        printk("XFE_MSG_RUN_PROG head: %p (%p), end: %u (%u %lu)\n", skb->head, skb->data, skb->end, skb->len, msg_len);
+        printk("XFE_MSG_RUN_PROG head: %p (%p), end: %u (%u %lu)\n", skb->head, skb->data, skb->end, skb->len, msg_len);
+
+        /* Get bpf_prog using FD */
+        struct bpf_prog *prog = bpf_prog_get_type(user_fd, BPF_PROG_TYPE_SCHED_CLS);
+        if (IS_ERR(prog)) {
+            printk(KERN_INFO "xfe netlink: bpf_prog_get_type ERROR\n");
+        } else {
+            int code = BPF_PROG_RUN(prog, skb);
+            printk(KERN_INFO "BPF_PROG_RUN returned code %d\n", code);
+            bpf_prog_put(prog);
         }
 
-        /* If instructed, get new FD */
-        if (user_fd >= 0) {
-            fd_valid = accel_map_get_fd_flex(user_fd, &f);
-        }
-
+        kfree_skb(skb);
         initialized = true;
     } else if (msg->msg_type == XFE_MSG_MAP_LOOKUP) {
         __u32 key = msg->msg_value;

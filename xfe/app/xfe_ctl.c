@@ -20,7 +20,7 @@
 struct sockaddr_nl src_addr;
 struct sockaddr_nl dest_addr;
 int sock_fd;
-int map_fd;
+int prog_fd;
 
 static int load_xdp(const char *obj_path)
 {
@@ -52,9 +52,14 @@ static int load_xdp(const char *obj_path)
     bpf_object__for_each_program(prog, obj)
     {
         const char *title = bpf_program__section_name(prog);
-        int error = bpf_program__set_xdp(prog);
-
-        printf(" - %s (set program type to xdp)\n", title);
+        int error;
+        if (strcmp(title, "netfilter_hook") == 0) {
+            error = bpf_program__set_sched_cls(prog); // or sched_act?
+            printf(" - %s (set program type to sched_cls)\n", title);
+        } else {
+            error = bpf_program__set_xdp(prog);
+            printf(" - %s (set program type to xdp)\n", title);
+        }
 
         if (error)
         {
@@ -169,17 +174,17 @@ static int send_netlink(void *data, size_t data_len)
     return 0;
 }
 
-int get_map_fd()
+int get_prog_fd()
 {
-    map_fd = bpf_obj_get(OBJ_PIN_PATH "/xfe_flows");
-    return map_fd;
+    prog_fd = bpf_obj_get(OBJ_PIN_PATH "/netfilter_hook");
+    return prog_fd;
 }
 
-int kmod_set_map_fd(int map_fd)
+int kmod_set_prog_fd(int prog_fd)
 {
     struct xfe_nl_msg xfe_msg = {
         XFE_MSG_MAP_FD,
-        map_fd};
+        prog_fd};
 
     /* Send map FD down to kernel module */
     if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
@@ -284,7 +289,7 @@ int main(int argc, char **argv)
         }
 
         /* Get flows map FD */
-        if (get_map_fd() < 0)
+        if (get_prog_fd() < 0)
         {
             printf("Could not get map FD.\n");
             err = -1;
@@ -292,7 +297,7 @@ int main(int argc, char **argv)
         }
 
         /* Send flows map FD to kmod */
-        err = kmod_set_map_fd(map_fd);
+        err = kmod_set_prog_fd(prog_fd);
         if (err)
         {
             printf("Could not send FD to kernel module.\n");
@@ -301,7 +306,7 @@ int main(int argc, char **argv)
         }
 
         /* Finish */
-        close(map_fd);
+        close(prog_fd);
     }
     else if (strncmp(cmd, "lookup", 6) == 0)
     {
@@ -352,7 +357,7 @@ int main(int argc, char **argv)
         printf("Stopping accelerator\n");
 
         /* Close flows map FD in kmod */
-        err = kmod_set_map_fd(-1);
+        err = kmod_set_prog_fd(-1);
         if (err)
         {
             printf("Could not load kernel module.\n");
