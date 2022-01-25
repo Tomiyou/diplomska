@@ -183,58 +183,10 @@ int get_prog_fd()
 int kmod_set_prog_fd(int prog_fd)
 {
     struct xfe_nl_msg xfe_msg = {
-        XFE_MSG_MAP_FD,
+        XFE_MSG_PROG_FD,
         prog_fd};
 
-    /* Send map FD down to kernel module */
-    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
-    {
-        printf("Could not send netlink message.\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-int kmod_lookup_elem(unsigned int key)
-{
-    struct xfe_nl_msg xfe_msg = {
-        XFE_MSG_MAP_LOOKUP,
-        key};
-
-    /* Send map FD down to kernel module */
-    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
-    {
-        printf("Could not send netlink message.\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-int kmod_delete_elem(unsigned int key)
-{
-    struct xfe_nl_msg xfe_msg = {
-        XFE_MSG_MAP_DELETE,
-        key};
-
-    /* Send map FD down to kernel module */
-    if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
-    {
-        printf("Could not send netlink message.\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-int kmod_update_elem(unsigned int key)
-{
-    struct xfe_nl_msg xfe_msg = {
-        XFE_MSG_MAP_UPDATE,
-        key};
-
-    /* Send map FD down to kernel module */
+    /* Send prog FD down to kernel module */
     if (send_netlink(&xfe_msg, sizeof(xfe_msg)))
     {
         printf("Could not send netlink message.\n");
@@ -274,7 +226,7 @@ int main(int argc, char **argv)
 
     cmd = argv[1];
 
-    if (strncmp(cmd, "init", 4) == 0)
+    if (strcmp(cmd, "init") == 0)
     {
         /* Init accelerator */
         printf("Initializing accelerator\n");
@@ -288,15 +240,15 @@ int main(int argc, char **argv)
             goto exit;
         }
 
-        /* Get flows map FD */
+        /* Get netfilter_hook prog FD */
         if (get_prog_fd() < 0)
         {
-            printf("Could not get map FD.\n");
+            printf("Could not get prog FD.\n");
             err = -1;
             goto exit;
         }
 
-        /* Send flows map FD to kmod */
+        /* Send netfilter_hook prog FD to kmod */
         err = kmod_set_prog_fd(prog_fd);
         if (err)
         {
@@ -308,37 +260,7 @@ int main(int argc, char **argv)
         /* Finish */
         close(prog_fd);
     }
-    else if (strncmp(cmd, "lookup", 6) == 0)
-    {
-        err = kmod_lookup_elem(37);
-        if (err)
-        {
-            printf("Could not send lookup request to kernel module.\n");
-            err = -1;
-            goto exit;
-        }
-    }
-    else if (strncmp(cmd, "delete", 6) == 0)
-    {
-        err = kmod_delete_elem(37);
-        if (err)
-        {
-            printf("Could not send delete request to kernel module.\n");
-            err = -1;
-            goto exit;
-        }
-    }
-    else if (strncmp(cmd, "update", 6) == 0)
-    {
-        err = kmod_update_elem(37);
-        if (err)
-        {
-            printf("Could not send update request to kernel module.\n");
-            err = -1;
-            goto exit;
-        }
-    }
-    else if (strncmp(cmd, "attach", 6) == 0)
+    else if (strcmp(cmd, "attach") == 0)
     {
         /* Attach XDP to interface */
         if (argc < 3)
@@ -350,8 +272,9 @@ int main(int argc, char **argv)
 
         printf("Attaching accelerator to interface %s\n", argv[2]);
         // TODO: attach_interface()
+        // fork() and run 'ip link ...'
     }
-    else if (strncmp(cmd, "deinit", 6) == 0)
+    else if (strcmp(cmd, "deinit") == 0)
     {
         /* De-init accelerator */
         printf("Stopping accelerator\n");
@@ -366,7 +289,7 @@ int main(int argc, char **argv)
         }
 
         /* Close all pinned objects */
-        // TODO: call unlink/'rm' on flows map
+        // TODO: call unlink/'rm' on flows map/progs
     }
     else
     {

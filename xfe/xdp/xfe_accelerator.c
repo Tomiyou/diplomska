@@ -225,20 +225,23 @@ out:
 SEC("netfilter_hook")
 int netfilter_hook_fn(struct __sk_buff *skb)
 {
-	struct xfe_nl_msg *msg = (struct xfe_nl_msg *)(unsigned long long)skb->data;
-	void *data_end = (void *)(unsigned long long)skb->data_end;
-	unsigned int data_size = sizeof(*msg);
+	void *data = (void *)(long)skb->data;
+	void *data_end = (void *)(long)skb->data_end;
 
-	bpf_printk("Hello from netfilter_hook! %p %p %u", msg, data_end, data_size);
+	/* Instructions on what to do */
+	struct xfe_kmod_message *msg;
+	unsigned int msg_size = sizeof(*msg);
 
 	/* Byte-count bounds check; check if msg + size of header
 	 * is after data_end. */
-	if (msg + data_size > data_end) {
+	if (data + msg_size > data_end) {
 		bpf_printk("Case A!");
 		return 0;
 	}
 
-	bpf_printk("Message %u %u!", msg->msg_type, msg->msg_value);
+	msg = (struct xfe_kmod_message *) data;
+
+	bpf_printk("Message %u %u!", msg->action, msg->placeholder);
 	return 0;
 }
 

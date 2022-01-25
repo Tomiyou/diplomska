@@ -10,88 +10,76 @@
 #define NETLINK_TEST 17
 
 struct sock *nl_sock = NULL;
+struct bpf_prog *prog = NULL;
 
-bool initialized = false;
-bool fd_valid = false;
-struct fd f;
-int prog_fd;
+static int run_bpf(struct xfe_kmod_message *msg)
+{
+    long unsigned int msg_len = sizeof(*msg);
+    struct sk_buff *skb;
+    int code;
+
+    if (!prog)
+    {
+        printk(KERN_INFO "xfe netlink: no BPF program\n");
+        return -1;
+    }
+
+    /* Allocate new SKB */
+    skb = alloc_skb(msg_len, GFP_ATOMIC);
+    memcpy(skb_put(skb, msg_len), msg, msg_len);
+    bpf_compute_data_pointers(skb);
+
+    /* Run BPF program */
+    code = BPF_PROG_RUN(prog, skb);
+
+    /* Cleanup */
+    kfree_skb(skb);
+
+    return code;
+}
 
 static void netlink_recv_msg(struct sk_buff *skb)
 {
-    struct sk_buff *skb_out;
     struct nlmsghdr *nlh;
     struct xfe_nl_msg *msg;
     int pid;
-    int res;
 
     nlh = (struct nlmsghdr *)skb->data;
     pid = nlh->nlmsg_pid; /* pid of sending process */
     msg = (struct xfe_nl_msg *)nlmsg_data(nlh);
 
-    if (msg->msg_type == XFE_MSG_MAP_FD) {
-        long unsigned int msg_len = sizeof(*msg);
+    if (msg->msg_type == XFE_MSG_PROG_FD)
+    {
         int user_fd = msg->msg_value;
-        printk(KERN_INFO "xfe netlink: Received FD %d\n", user_fd);
+        struct bpf_prog *_prog;
 
-        /* Allocate new SKB */
-        struct sk_buff *skb = alloc_skb(msg_len, GFP_ATOMIC);
-        memcpy(skb_put(skb, msg_len), msg, msg_len);
-        printk("XFE_MSG_RUN_PROG head: %p (%p), end: %u (%u %lu)\n", skb->head, skb->data, skb->end, skb->len, msg_len);
-        printk("XFE_MSG_RUN_PROG head: %p (%p), end: %u (%u %lu)\n", skb->head, skb->data, skb->end, skb->len, msg_len);
-
-        /* Get bpf_prog using FD */
-        struct bpf_prog *prog = bpf_prog_get_type(user_fd, BPF_PROG_TYPE_SCHED_CLS);
-        if (IS_ERR(prog)) {
-            printk(KERN_INFO "xfe netlink: bpf_prog_get_type ERROR\n");
-        } else {
-            int code = BPF_PROG_RUN(prog, skb);
-            printk(KERN_INFO "BPF_PROG_RUN returned code %d\n", code);
+        /* Free old BPF program */
+        if (prog) {
             bpf_prog_put(prog);
+            prog = NULL;
         }
 
-        kfree_skb(skb);
-        initialized = true;
-    } else if (msg->msg_type == XFE_MSG_MAP_LOOKUP) {
-        __u32 key = msg->msg_value;
-        struct xfe_flow flow;
-        int err;
+        /* Check if the FD user passed is valid */
+        if (user_fd < 0)
+            goto out;
 
-        printk(KERN_INFO "xfe netlink: Looking up key %u\n", key);
-
-        err = accel_map_lookup_elem(f, &key, &flow, 0);
-        if (err != 0) {
-            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FAILED %d\n", err);
-        } else {
-            printk(KERN_INFO "xfe netlink: accel_map_lookup_elem FOUND %u\n", flow.rx_packet_count);
+        /* Lookup new BPF program */
+        _prog = bpf_prog_get_type(user_fd, BPF_PROG_TYPE_SCHED_CLS);
+        if (IS_ERR(_prog))
+        {
+            printk(KERN_INFO "xfe netlink: bpf_prog_get_type returned ERROR\n");
+            goto out;
         }
-    } else if (msg->msg_type == XFE_MSG_MAP_DELETE) {
-        __u32 key = msg->msg_value;
-        int err;
 
-        printk(KERN_INFO "xfe netlink: Deleting key %u\n", key);
-
-        err = accel_map_delete_elem(f, &key, 0);
-        if (err != 0) {
-            printk(KERN_INFO "xfe netlink: accel_map_delete_elem FAILED %d\n", err);
-        } else {
-            printk(KERN_INFO "xfe netlink: accel_map_delete_elem SUCCEEDED");
-        }
-    } else if (msg->msg_type == XFE_MSG_MAP_UPDATE) {
-        __u32 key = msg->msg_value;
-        struct xfe_flow flow;
-        int err;
-
-        printk(KERN_INFO "xfe netlink: Inserting key %u and value %u\n", key, flow.rx_packet_count);
-
-        err = accel_map_update_elem(f, &key, &flow, 0);
-        if (err != 0) {
-            printk(KERN_INFO "xfe netlink: accel_map_update_elem FAILED %d\n", err);
-        } else {
-            printk(KERN_INFO "xfe netlink: accel_map_update_elem SUCCEEDED\n");
-        }
-    } else {
-        printk(KERN_INFO "xfe netlink: Unknown message type %u\n", msg->msg_value);
+        prog = _prog;
     }
+    else
+    {
+        printk(KERN_INFO "xfe netlink: Unknown message type %u\n", msg->msg_type);
+    }
+
+out:
+    return;
 }
 
 static int __init xfe_init(void)
@@ -118,10 +106,8 @@ static void __exit xfe_exit(void)
     {
         netlink_kernel_release(nl_sock);
     }
-    if (fd_valid)
-    {
-        printk(KERN_INFO "xfe netlink: Closing FD\n");
-        fdput(f);
+    if (prog) {
+        bpf_prog_put(prog);
     }
 
     printk(KERN_INFO "XFE exit\n");

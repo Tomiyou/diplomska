@@ -3,11 +3,7 @@
 #include <stdbool.h>
 
 enum xfe_nl_msg_type {
-	XFE_MSG_MAP_FD,
-	XFE_MSG_MAP_LOOKUP,
-	XFE_MSG_MAP_DELETE,
-	XFE_MSG_MAP_UPDATE,
-	XFE_MSG_RUN_PROG
+	XFE_MSG_PROG_FD
 };
 
 struct xfe_nl_msg {
@@ -46,4 +42,15 @@ struct xfe_flow {
 
 	/* QoS information */
 	__u8 tos;
+};
+
+enum xfe_kmod_action {
+	XFE_KMOD_INSERT,
+	XFE_KMOD_UPDATE,
+	XFE_KMOD_FLUSH
+};
+
+struct xfe_kmod_message {
+	enum xfe_kmod_action action;
+	unsigned int placeholder;
 };
