@@ -1,4 +1,4 @@
-obj-m += xfe_main.o
+obj-m += xfe_kmod_main.o
 ccflags-y += -I$(obj)/../headers/
 
 all:
