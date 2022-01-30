@@ -1,20 +1,3 @@
-/*
- * fast-classifier.c
- *	Shortcut forwarding engine connection manager.
- *	fast-classifier
- *
- * Copyright (c) 2013-2018 The Linux Foundation. All rights reserved.
- * Permission to use, copy, modify, and/or distribute this software for
- * any purpose with or without fee is hereby granted, provided that the
- * above copyright notice and this permission notice appear in all copies.
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
- * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 #include <linux/module.h>
 #include <linux/sysfs.h>
 #include <linux/skbuff.h>
@@ -35,37 +18,34 @@
 #include <linux/if_bridge.h>
 #include <linux/hashtable.h>
 
-#include <xfe_backport.h>
-#include <xfe.h>
-#include <xfe_cm.h>
-#include "fast-classifier.h"
+#include "xfe_kmod.h"
 
 typedef enum xfe_exception {
-	FAST_CL_EXCEPTION_PACKET_BROADCAST,
-	FAST_CL_EXCEPTION_PACKET_MULTICAST,
-	FAST_CL_EXCEPTION_NO_IIF,
-	FAST_CL_EXCEPTION_NO_CT,
-	FAST_CL_EXCEPTION_CT_NO_TRACK,
-	FAST_CL_EXCEPTION_CT_NO_CONFIRM,
-	FAST_CL_EXCEPTION_CT_IS_ALG,
-	FAST_CL_EXCEPTION_IS_IPV4_MCAST,
-	FAST_CL_EXCEPTION_IS_IPV6_MCAST,
-	FAST_CL_EXCEPTION_TCP_NOT_ASSURED,
-	FAST_CL_EXCEPTION_TCP_NOT_ESTABLISHED,
-	FAST_CL_EXCEPTION_UNKNOW_PROTOCOL,
-	FAST_CL_EXCEPTION_NO_SRC_DEV,
-	FAST_CL_EXCEPTION_NO_SRC_XLATE_DEV,
-	FAST_CL_EXCEPTION_NO_DEST_DEV,
-	FAST_CL_EXCEPTION_NO_DEST_XLATE_DEV,
-	FAST_CL_EXCEPTION_NO_BRIDGE,
-	FAST_CL_EXCEPTION_LOCAL_OUT,
-	FAST_CL_EXCEPTION_WAIT_FOR_ACCELERATION,
-	FAST_CL_EXCEPTION_UPDATE_PROTOCOL_FAIL,
-	FAST_CL_EXCEPTION_CT_DESTROY_MISS,
-	FAST_CL_EXCEPTION_MAX
+	XFE_EXCEPTION_PACKET_BROADCAST,
+	XFE_EXCEPTION_PACKET_MULTICAST,
+	XFE_EXCEPTION_NO_IIF,
+	XFE_EXCEPTION_NO_CT,
+	XFE_EXCEPTION_CT_NO_TRACK,
+	XFE_EXCEPTION_CT_NO_CONFIRM,
+	XFE_EXCEPTION_CT_IS_ALG,
+	XFE_EXCEPTION_IS_IPV4_MCAST,
+	XFE_EXCEPTION_IS_IPV6_MCAST,
+	XFE_EXCEPTION_TCP_NOT_ASSURED,
+	XFE_EXCEPTION_TCP_NOT_ESTABLISHED,
+	XFE_EXCEPTION_UNKNOW_PROTOCOL,
+	XFE_EXCEPTION_NO_SRC_DEV,
+	XFE_EXCEPTION_NO_SRC_XLATE_DEV,
+	XFE_EXCEPTION_NO_DEST_DEV,
+	XFE_EXCEPTION_NO_DEST_XLATE_DEV,
+	XFE_EXCEPTION_NO_BRIDGE,
+	XFE_EXCEPTION_LOCAL_OUT,
+	XFE_EXCEPTION_WAIT_FOR_ACCELERATION,
+	XFE_EXCEPTION_UPDATE_PROTOCOL_FAIL,
+	XFE_EXCEPTION_CT_DESTROY_MISS,
+	XFE_EXCEPTION_MAX
 } xfe_exception_t;
 
-static char *xfe_exception_events_string[FAST_CL_EXCEPTION_MAX] = {
+static char *xfe_exception_events_string[XFE_EXCEPTION_MAX] = {
 	"PACKET_BROADCAST",
 	"PACKET_MULTICAST",
 	"NO_IIF",
@@ -105,58 +85,10 @@ struct xfe {
 	 */
 	struct notifier_block dev_notifier;	/* Device notifier */
 	struct notifier_block inet_notifier;	/* IPv4 notifier */
-	u32 exceptions[FAST_CL_EXCEPTION_MAX];
+	u32 exceptions[XFE_EXCEPTION_MAX];
 };
 
 static struct xfe __sc;
-
-static struct nla_policy xfe_genl_policy[FAST_CLASSIFIER_A_MAX + 1] = {
-	[FAST_CLASSIFIER_A_TUPLE] = {
-		.type = NLA_UNSPEC,
-		.len = sizeof(struct xfe_tuple)
-	},
-};
-
-static struct genl_multicast_group xfe_genl_mcgrp[] = {
-	{
-		.name = FAST_CLASSIFIER_GENL_MCGRP,
-	},
-};
-
-static struct genl_family xfe_gnl_family = {
-	.id = GENL_ID_GENERATE,
-	.hdrsize = FAST_CLASSIFIER_GENL_HDRSIZE,
-	.name = FAST_CLASSIFIER_GENL_NAME,
-	.version = FAST_CLASSIFIER_GENL_VERSION,
-	.maxattr = FAST_CLASSIFIER_A_MAX,
-};
-
-static int xfe_offload_genl_msg(struct sk_buff *skb, struct genl_info *info);
-static int xfe_nl_genl_msg_DUMP(struct sk_buff *skb, struct netlink_callback *cb);
-
-static struct genl_ops xfe_gnl_ops[] = {
-	{
-		.cmd = FAST_CLASSIFIER_C_OFFLOAD,
-		.flags = 0,
-		.policy = xfe_genl_policy,
-		.doit = xfe_offload_genl_msg,
-		.dumpit = NULL,
-	},
-	{
-		.cmd = FAST_CLASSIFIER_C_OFFLOADED,
-		.flags = 0,
-		.policy = xfe_genl_policy,
-		.doit = NULL,
-		.dumpit = xfe_nl_genl_msg_DUMP,
-	},
-	{
-		.cmd = FAST_CLASSIFIER_C_DONE,
-		.flags = 0,
-		.policy = xfe_genl_policy,
-		.doit = NULL,
-		.dumpit = xfe_nl_genl_msg_DUMP,
-	},
-};
 
 static atomic_t offload_msgs = ATOMIC_INIT(0);
 static atomic_t offload_no_match_msgs = ATOMIC_INIT(0);
@@ -191,78 +123,6 @@ static inline void xfe_incr_exceptions(xfe_exception_t except)
 	spin_lock_bh(&sc->lock);
 	sc->exceptions[except]++;
 	spin_unlock_bh(&sc->lock);
-}
-
-/*
- * xfe_recv()
- *	Handle packet receives.
- *
- * Returns 1 if the packet is forwarded or 0 if it isn't.
- */
-int xfe_recv(struct sk_buff *skb)
-{
-	struct net_device *dev;
-	struct net_device *master_dev = NULL;
-	int ret = 0;
-
-	/*
-	 * We know that for the vast majority of packets we need the transport
-	 * layer header so we may as well start to fetch it now!
-	 */
-	prefetch(skb->data + 32);
-	barrier();
-
-	dev = skb->dev;
-
-	/*
-	 * Process packet like it arrived on the bridge device
-	 */
-	if (skip_to_bridge_ingress &&
-	    (dev->priv_flags & IFF_BRIDGE_PORT)) {
-		master_dev = xfe_dev_get_master(dev);
-		if (!master_dev) {
-			DEBUG_WARN("master dev is NULL %s\n", dev->name);
-			goto rx_exit;
-		}
-		dev = master_dev;
-	}
-
-	/*
-	 * We're only interested in IPv4 packets.
-	 */
-	if (likely(htons(ETH_P_IP) == skb->protocol)) {
-		struct in_device *in_dev;
-
-		/*
-		 * Does our input device support IP processing?
-		 */
-		in_dev = (struct in_device *)dev->ip_ptr;
-		if (unlikely(!in_dev)) {
-			DEBUG_TRACE("no IP processing for device: %s\n", dev->name);
-			goto rx_exit;
-		}
-
-		/*
-		 * Does it have an IP address?  If it doesn't then we can't do anything
-		 * interesting here!
-		 */
-		if (unlikely(!in_dev->ifa_list)) {
-			DEBUG_TRACE("no IP address for device: %s\n", dev->name);
-			goto rx_exit;
-		}
-
-		ret = xfe_ipv4_recv(dev, skb);
-
-	} else {
-		DEBUG_TRACE("not IPv4 packet\n");
-	}
-
-rx_exit:
-	if (master_dev) {
-		dev_put(master_dev);
-	}
-
-	return ret;
 }
 
 /*
@@ -396,7 +256,7 @@ static int xfe_update_protocol(struct xfe_connection_create *p_sic, struct nf_co
 		spin_lock(&ct->lock);
 		if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
 			spin_unlock(&ct->lock);
-			xfe_incr_exceptions(FAST_CL_EXCEPTION_TCP_NOT_ESTABLISHED);
+			xfe_incr_exceptions(XFE_EXCEPTION_TCP_NOT_ESTABLISHED);
 			DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
 				    ct->proto.tcp.state, &p_sic->src_ip, ntohs(p_sic->src_port),
 				    &p_sic->dest_ip, ntohs(p_sic->dest_port));
@@ -409,89 +269,12 @@ static int xfe_update_protocol(struct xfe_connection_create *p_sic, struct nf_co
 		break;
 
 	default:
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_UNKNOW_PROTOCOL);
+		xfe_incr_exceptions(XFE_EXCEPTION_UNKNOW_PROTOCOL);
 		DEBUG_TRACE("unhandled protocol %d\n", p_sic->protocol);
 		return 0;
 	}
 
 	return 1;
-}
-
-/* xfe_send_genl_msg()
- * 	Function to send a generic netlink message
- */
-static void xfe_send_genl_msg(int msg, struct xfe_tuple *fc_msg)
-{
-	struct sk_buff *skb;
-	int rc;
-	int buf_len;
-	int total_len;
-	void *msg_head;
-
-	/*
-	 * Calculate our packet payload size.
-	 * Start with our family header.
-	 */
-	buf_len = xfe_gnl_family.hdrsize;
-
-	/*
-	 * Add the nla_total_size of each attribute we're going to nla_put().
-	 */
-	buf_len += nla_total_size(sizeof(*fc_msg));
-
-	/*
-	 * Lastly we need to add space for the NL message header since
-	 * genlmsg_new only accounts for the GENL header and not the
-	 * outer NL header. To do this, we use a NL helper function which
-	 * calculates the total size of a netlink message given a payload size.
-	 * Note this value does not include the GENL header, but that's
-	 * added automatically by genlmsg_new.
-	 */
-	total_len = nlmsg_total_size(buf_len);
-	skb = genlmsg_new(total_len, GFP_ATOMIC);
-	if (!skb)
-		return;
-
-	msg_head = genlmsg_put(skb, 0, 0, &xfe_gnl_family, 0, msg);
-	if (!msg_head) {
-		nlmsg_free(skb);
-		return;
-	}
-
-	rc = nla_put(skb, FAST_CLASSIFIER_A_TUPLE, sizeof(struct xfe_tuple), fc_msg);
-	if (rc != 0) {
-		genlmsg_cancel(skb, msg_head);
-		nlmsg_free(skb);
-		return;
-	}
-
-	genlmsg_end(skb, msg_head);
-
-	rc = genlmsg_multicast(&xfe_gnl_family, skb, 0, 0, GFP_ATOMIC);
-	switch (msg) {
-	case FAST_CLASSIFIER_C_OFFLOADED:
-		if (rc == 0) {
-			atomic_inc(&offloaded_msgs);
-		} else {
-			atomic_inc(&offloaded_fail_msgs);
-		}
-		break;
-	case FAST_CLASSIFIER_C_DONE:
-		if (rc == 0) {
-			atomic_inc(&done_msgs);
-		} else {
-			atomic_inc(&done_fail_msgs);
-		}
-		break;
-	default:
-		DEBUG_ERROR("fast-classifer: Unknown message type sent!\n");
-		break;
-	}
-
-	DEBUG_TRACE("Notify NL message %d ", msg);
-	DEBUG_TRACE("sip=%pI4 dip=%pI4 ", &fc_msg->src_saddr, &fc_msg->dst_saddr);
-	DEBUG_TRACE("protocol=%d sport=%d dport=%d smac=%pM dmac=%pM\n",
-		    fc_msg->proto, fc_msg->sport, fc_msg->dport, fc_msg->smac, fc_msg->dmac);
 }
 
 /*
@@ -622,62 +405,6 @@ xfe_add_conn(struct xfe_connection *conn)
 	return conn;
 }
 
-/*
- * xfe_offload_genl_msg()
- * 	Called from user space to offload a connection
- */
-static int
-xfe_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
-{
-	struct nlattr *na;
-	struct xfe_tuple *fc_msg;
-	struct xfe_connection *conn;
-
-	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
-	fc_msg = nla_data(na);
-
-	DEBUG_TRACE("want to offload: %d-%d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
-		    fc_msg->ethertype,
-		    fc_msg->proto,
-		    &fc_msg->src_saddr,
-		    &fc_msg->dst_saddr,
-		    fc_msg->sport,
-		    fc_msg->dport,
-		    fc_msg->smac,
-		    fc_msg->dmac);
-
-	spin_lock_bh(&xfe_connections_lock);
-	conn = xfe_sb_find_conn((xfe_ip_addr_t *)&fc_msg->src_saddr,
-					 (xfe_ip_addr_t *)&fc_msg->dst_saddr,
-					 fc_msg->sport,
-					 fc_msg->dport,
-					 fc_msg->proto,
-					 (fc_msg->ethertype == AF_INET));
-	if (!conn) {
-		spin_unlock_bh(&xfe_connections_lock);
-		DEBUG_TRACE("REQUEST OFFLOAD NO MATCH\n");
-		atomic_inc(&offload_no_match_msgs);
-		return 0;
-	}
-
-	conn->offload_permit = 1;
-	spin_unlock_bh(&xfe_connections_lock);
-	atomic_inc(&offload_msgs);
-
-	DEBUG_TRACE("INFO: calling xfe rule creation!\n");
-	return 0;
-}
-
-/*
- * xfe_nl_genl_msg_DUMP()
- *	ignore xfe_messages OFFLOADED and DONE
- */
-static int xfe_nl_genl_msg_DUMP(struct sk_buff *skb,
-				struct netlink_callback *cb)
-{
-	return 0;
-}
-
 /* auto offload connection once we have this many packets*/
 static int offload_at_pkts = 128;
 
@@ -708,12 +435,12 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 * Don't process broadcast or multicast packets.
 	 */
 	if (unlikely(skb->pkt_type == PACKET_BROADCAST)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_PACKET_BROADCAST);
+		xfe_incr_exceptions(XFE_EXCEPTION_PACKET_BROADCAST);
 		DEBUG_TRACE("broadcast, ignoring\n");
 		return NF_ACCEPT;
 	}
 	if (unlikely(skb->pkt_type == PACKET_MULTICAST)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_PACKET_MULTICAST);
+		xfe_incr_exceptions(XFE_EXCEPTION_PACKET_MULTICAST);
 		DEBUG_TRACE("multicast, ignoring\n");
 		return NF_ACCEPT;
 	}
@@ -723,7 +450,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 */
 	in = dev_get_by_index(&init_net, skb->skb_iif);
 	if (!in) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_IIF);
+		xfe_incr_exceptions(XFE_EXCEPTION_NO_IIF);
 		DEBUG_TRACE("packet not forwarding\n");
 		return NF_ACCEPT;
 	}
@@ -735,7 +462,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 */
 	ct = nf_ct_get(skb, &ctinfo);
 	if (unlikely(!ct)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_CT);
+		xfe_incr_exceptions(XFE_EXCEPTION_NO_CT);
 		DEBUG_TRACE("no conntrack connection, ignoring\n");
 		return NF_ACCEPT;
 	}
@@ -744,7 +471,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 * Don't process untracked connections.
 	 */
 	if (unlikely(nf_ct_is_untracked(ct))) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_CT_NO_TRACK);
+		xfe_incr_exceptions(XFE_EXCEPTION_CT_NO_TRACK);
 		DEBUG_TRACE("untracked connection\n");
 		return NF_ACCEPT;
 	}
@@ -754,7 +481,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 * So we don't process unconfirmed connections.
 	 */
 	if (!nf_ct_is_confirmed(ct)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_CT_NO_CONFIRM);
+		xfe_incr_exceptions(XFE_EXCEPTION_CT_NO_CONFIRM);
 		DEBUG_TRACE("unconfirmed connection\n");
 		return NF_ACCEPT;
 	}
@@ -763,7 +490,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 * Don't process connections that require support from a 'helper' (typically a NAT ALG).
 	 */
 	if (unlikely(nfct_help(ct))) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_CT_IS_ALG);
+		xfe_incr_exceptions(XFE_EXCEPTION_CT_IS_ALG);
 		DEBUG_TRACE("connection has helper\n");
 		return NF_ACCEPT;
 	}
@@ -791,7 +518,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
 	if (ipv4_is_multicast(sic.src_ip.ip) || ipv4_is_multicast(sic.dest_ip.ip)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_IS_IPV4_MCAST);
+		xfe_incr_exceptions(XFE_EXCEPTION_IS_IPV4_MCAST);
 		DEBUG_TRACE("multicast address\n");
 		return NF_ACCEPT;
 	}
@@ -821,7 +548,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		 * Don't try to manage a non-established connection.
 		 */
 		if (!test_bit(IPS_ASSURED_BIT, &ct->status)) {
-			xfe_incr_exceptions(FAST_CL_EXCEPTION_TCP_NOT_ASSURED);
+			xfe_incr_exceptions(XFE_EXCEPTION_TCP_NOT_ASSURED);
 			DEBUG_TRACE("non-established connection\n");
 			return NF_ACCEPT;
 		}
@@ -836,7 +563,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		break;
 
 	default:
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_UNKNOW_PROTOCOL);
+		xfe_incr_exceptions(XFE_EXCEPTION_UNKNOW_PROTOCOL);
 		DEBUG_TRACE("unhandled protocol %d\n", sic.protocol);
 		return NF_ACCEPT;
 	}
@@ -874,7 +601,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 
 				if (xfe_update_protocol(conn->sic, conn->ct) == 0) {
 					spin_unlock_bh(&xfe_connections_lock);
-					xfe_incr_exceptions(FAST_CL_EXCEPTION_UPDATE_PROTOCOL_FAIL);
+					xfe_incr_exceptions(XFE_EXCEPTION_UPDATE_PROTOCOL_FAIL);
 					DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
 					return NF_ACCEPT;
 				}
@@ -882,20 +609,8 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 				DEBUG_TRACE("INFO: calling xfe rule creation!\n");
 				spin_unlock_bh(&xfe_connections_lock);
 
-				xfe_ipv4_create_rule(conn->sic);
+				ret = xfe_ipv4_create_rule(conn->sic);
 				if ((ret == 0) || (ret == -EADDRINUSE)) {
-					struct xfe_tuple fc_msg;
-
-					fc_msg.ethertype = AF_INET;
-					fc_msg.src_saddr.in = *((struct in_addr *)&sic.src_ip);
-					fc_msg.dst_saddr.in = *((struct in_addr *)&sic.dest_ip_xlate);
-
-					fc_msg.proto = sic.protocol;
-					fc_msg.sport = sic.src_port;
-					fc_msg.dport = sic.dest_port_xlate;
-					memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
-					memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
-					xfe_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, &fc_msg);
 					conn->offloaded = 1;
 				}
 
@@ -909,7 +624,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		}
 
 		DEBUG_TRACE("FOUND, SKIPPING\n");
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_WAIT_FOR_ACCELERATION);
+		xfe_incr_exceptions(XFE_EXCEPTION_WAIT_FOR_ACCELERATION);
 		return NF_ACCEPT;
 	}
 
@@ -920,25 +635,25 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 * destination host addresses.
 	 */
 	if (!xfe_find_dev_and_mac_addr(&sic.src_ip, &src_dev_tmp, sic.src_mac, is_v4)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_SRC_DEV);
+		xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_DEV);
 		return NF_ACCEPT;
 	}
 	src_dev = src_dev_tmp;
 
 	if (!xfe_find_dev_and_mac_addr(&sic.src_ip_xlate, &dev, sic.src_mac_xlate, is_v4)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_SRC_XLATE_DEV);
+		xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_XLATE_DEV);
 		goto done1;
 	}
 	dev_put(dev);
 
 	if (!xfe_find_dev_and_mac_addr(&sic.dest_ip, &dev, sic.dest_mac, is_v4)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_DEST_DEV);
+		xfe_incr_exceptions(XFE_EXCEPTION_NO_DEST_DEV);
 		goto done1;
 	}
 	dev_put(dev);
 
 	if (!xfe_find_dev_and_mac_addr(&sic.dest_ip_xlate, &dest_dev_tmp, sic.dest_mac_xlate, is_v4)) {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_DEST_XLATE_DEV);
+		xfe_incr_exceptions(XFE_EXCEPTION_NO_DEST_XLATE_DEV);
 		goto done1;
 	}
 	dest_dev = dest_dev_tmp;
@@ -950,7 +665,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
 		src_br_dev = xfe_dev_get_master(src_dev);
 		if (!src_br_dev) {
-			xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_BRIDGE);
+			xfe_incr_exceptions(XFE_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
 			goto done2;
 		}
@@ -960,7 +675,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
 		dest_br_dev = xfe_dev_get_master(dest_dev);
 		if (!dest_br_dev) {
-			xfe_incr_exceptions(FAST_CL_EXCEPTION_NO_BRIDGE);
+			xfe_incr_exceptions(XFE_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
 			goto done3;
 		}
@@ -1037,7 +752,7 @@ xfe_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 
 /*
  * xfe_update_mark()
- *	updates the mark for a fast-classifier connection
+ *	updates the mark for a xfe connection
  */
 static void xfe_update_mark(struct xfe_connection_mark *mark, bool is_v4)
 {
@@ -1178,16 +893,12 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 		kfree(conn->sic);
 		kfree(conn);
 	} else {
-		xfe_incr_exceptions(FAST_CL_EXCEPTION_CT_DESTROY_MISS);
+		xfe_incr_exceptions(XFE_EXCEPTION_CT_DESTROY_MISS);
 	}
 
 	spin_unlock_bh(&xfe_connections_lock);
 
 	xfe_ipv4_destroy_rule(&sid);
-
-	if (offloaded) {
-		xfe_send_genl_msg(FAST_CLASSIFIER_C_DONE, &fc_msg);
-	}
 
 	return NOTIFY_DONE;
 }
@@ -1472,7 +1183,7 @@ static ssize_t xfe_get_exceptions(struct device *dev,
 	struct xfe *sc = &__sc;
 
 	spin_lock_bh(&sc->lock);
-	for (len = 0, idx = 0; idx < FAST_CL_EXCEPTION_MAX; idx++) {
+	for (len = 0, idx = 0; idx < XFE_EXCEPTION_MAX; idx++) {
 		if (sc->exceptions[idx]) {
 			len += snprintf(buf + len, (ssize_t)(PAGE_SIZE - len), "%s = %d\n", xfe_exception_events_string[idx], sc->exceptions[idx]);
 		}
@@ -1502,7 +1213,7 @@ static int __init xfe_init(void)
 	struct xfe *sc = &__sc;
 	int result = -1;
 
-	printk(KERN_ALERT "fast-classifier: starting up\n");
+	printk(KERN_ALERT "xfe: starting up\n");
 	DEBUG_INFO("XFE CM init\n");
 
 	hash_init(fc_conn_ht);
@@ -1574,23 +1285,9 @@ static int __init xfe_init(void)
 	}
 #endif
 
-	result = genl_register_family_with_ops_groups(&xfe_gnl_family,
-						      xfe_gnl_ops,
-						      xfe_genl_mcgrp);
-	if (result) {
-		DEBUG_ERROR("failed to register genl ops: %d\n", result);
-		goto exit5;
-	}
-
-	printk(KERN_ALERT "fast-classifier: registered\n");
+	printk(KERN_ALERT "xfe: registered\n");
 
 	spin_lock_init(&sc->lock);
-
-	/*
-	 * Hook the receive path in the network stack.
-	 */
-	BUG_ON(athrs_fast_nat_recv);
-	RCU_INIT_POINTER(athrs_fast_nat_recv, xfe_recv);
 
 	/*
 	 * Hook the shortcut sync callback.
@@ -1630,17 +1327,12 @@ static void __exit xfe_exit(void)
 	int result = -1;
 
 	DEBUG_INFO("XFE CM exit\n");
-	printk(KERN_ALERT "fast-classifier: shutting down\n");
+	printk(KERN_ALERT "xfe: shutting down\n");
 
 	/*
 	 * Unregister our sync callback.
 	 */
 	xfe_ipv4_register_sync_rule_callback(NULL);
-
-	/*
-	 * Unregister our receive callback.
-	 */
-	RCU_INIT_POINTER(athrs_fast_nat_recv, NULL);
 
 	/*
 	 * Wait for all callbacks to complete.
@@ -1651,11 +1343,6 @@ static void __exit xfe_exit(void)
 	 * Destroy all connections.
 	 */
 	xfe_ipv4_destroy_all_rules_for_dev(NULL);
-
-	result = genl_unregister_family(&xfe_gnl_family);
-	if (result != 0) {
-		printk(KERN_CRIT "Unable to unreigster genl_family\n");
-	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &xfe_conntrack_notifier);
