@@ -257,6 +257,8 @@ int main(int argc, char **argv)
             goto exit;
         }
 
+        printf("Successfully sent FD to kernel module.\n");
+
         /* Finish */
         close(prog_fd);
     }

@@ -18,7 +18,12 @@
 #include <linux/if_bridge.h>
 #include <linux/hashtable.h>
 
+#include "xfe_types.h"
 #include "xfe_kmod.h"
+
+#define NETLINK_TEST 17
+
+static struct sock *nl_sock = NULL;
 
 typedef enum xfe_exception {
 	XFE_EXCEPTION_PACKET_BROADCAST,
@@ -231,22 +236,24 @@ static u32 fc_conn_hash(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
  */
 static int xfe_update_protocol(struct xfe_connection_create *p_sic, struct nf_conn *ct)
 {
-	switch (p_sic->protocol) {
+	switch (p_sic->ip_proto) {
 	case IPPROTO_TCP:
-		p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
-		p_sic->src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
-		p_sic->src_td_end = ct->proto.tcp.seen[0].td_end;
-		p_sic->src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
-		p_sic->dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
-		p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
-		p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
-		p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
+		/* We don't care about this right now */
+		// p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
+		// p_sic->src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
+		// p_sic->src_td_end = ct->proto.tcp.seen[0].td_end;
+		// p_sic->src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
+		// p_sic->dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
+		// p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
+		// p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
+		// p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
 
-		if (nf_ct_tcp_no_window_check
-		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
-		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
-			p_sic->flags |= XFE_CREATE_FLAG_NO_SEQ_CHECK;
-		}
+		/* TODO */
+		// if (nf_ct_tcp_no_window_check
+		//     || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
+		//     || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
+		// 	p_sic->flags |= XFE_CREATE_FLAG_NO_SEQ_CHECK;
+		// }
 
 		/*
 		 * If the connection is shutting down do not manage it.
@@ -270,7 +277,7 @@ static int xfe_update_protocol(struct xfe_connection_create *p_sic, struct nf_co
 
 	default:
 		xfe_incr_exceptions(XFE_EXCEPTION_UNKNOW_PROTOCOL);
-		DEBUG_TRACE("unhandled protocol %d\n", p_sic->protocol);
+		DEBUG_TRACE("unhandled protocol %d\n", p_sic->ip_proto);
 		return 0;
 	}
 
@@ -300,7 +307,7 @@ xfe_find_conn(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
 
 		p_sic = conn->sic;
 
-		if (p_sic->protocol == proto &&
+		if (p_sic->ip_proto == proto &&
 		    p_sic->src_port == sport &&
 		    p_sic->dest_port == dport &&
 		    xfe_addr_equal(&p_sic->src_ip, saddr, is_v4) &&
@@ -337,7 +344,7 @@ xfe_sb_find_conn(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
 
 		p_sic = conn->sic;
 
-		if (p_sic->protocol == proto &&
+		if (p_sic->ip_proto == proto &&
 		    p_sic->src_port == sport &&
 		    p_sic->dest_port_xlate == dport &&
 		    xfe_addr_equal(&p_sic->src_ip, saddr, is_v4) &&
@@ -358,7 +365,7 @@ xfe_sb_find_conn(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
 
 		p_sic = conn->sic;
 
-		if (p_sic->protocol == proto &&
+		if (p_sic->ip_proto == proto &&
 		    p_sic->src_port == dport &&
 		    p_sic->dest_port_xlate == sport &&
 		    xfe_addr_equal(&p_sic->src_ip, daddr, is_v4) &&
@@ -385,7 +392,7 @@ xfe_add_conn(struct xfe_connection *conn)
 
 	spin_lock_bh(&xfe_connections_lock);
 	if (xfe_find_conn(&sic->src_ip, &sic->dest_ip, sic->src_port,
-					sic->dest_port, sic->protocol, conn->is_v4)) {
+					sic->dest_port, sic->ip_proto, conn->is_v4)) {
 		spin_unlock_bh(&xfe_connections_lock);
 		return NULL;
 	}
@@ -400,7 +407,7 @@ xfe_add_conn(struct xfe_connection *conn)
 	DEBUG_TRACE(" -> adding item to xfe_connections, new size: %d\n", xfe_connections_size);
 
 	DEBUG_TRACE("new offloadable: key: %u proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-			key, sic->protocol, &(sic->src_ip), &(sic->dest_ip), sic->src_port, sic->dest_port);
+			key, sic->ip_proto, &(sic->src_ip), &(sic->dest_ip), sic->src_port, sic->dest_port);
 
 	return conn;
 }
@@ -431,17 +438,20 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	struct nf_conntrack_tuple reply_tuple;
 	struct xfe_connection *conn;
 
+	/* We only support IPv4 for now. */
+	if (!is_v4) {
+		return NF_ACCEPT;
+	}
+
 	/*
 	 * Don't process broadcast or multicast packets.
 	 */
 	if (unlikely(skb->pkt_type == PACKET_BROADCAST)) {
 		xfe_incr_exceptions(XFE_EXCEPTION_PACKET_BROADCAST);
-		DEBUG_TRACE("broadcast, ignoring\n");
 		return NF_ACCEPT;
 	}
 	if (unlikely(skb->pkt_type == PACKET_MULTICAST)) {
 		xfe_incr_exceptions(XFE_EXCEPTION_PACKET_MULTICAST);
-		DEBUG_TRACE("multicast, ignoring\n");
 		return NF_ACCEPT;
 	}
 
@@ -451,7 +461,6 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	in = dev_get_by_index(&init_net, skb->skb_iif);
 	if (!in) {
 		xfe_incr_exceptions(XFE_EXCEPTION_NO_IIF);
-		DEBUG_TRACE("packet not forwarding\n");
 		return NF_ACCEPT;
 	}
 
@@ -470,7 +479,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	/*
 	 * Don't process untracked connections.
 	 */
-	if (unlikely(nf_ct_is_untracked(ct))) {
+	if (unlikely((ct->status & IPS_CONFIRMED) == 0)) {
 		xfe_incr_exceptions(XFE_EXCEPTION_CT_NO_TRACK);
 		DEBUG_TRACE("untracked connection\n");
 		return NF_ACCEPT;
@@ -505,7 +514,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 */
 	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
 	reply_tuple = ct->tuplehash[IP_CT_DIR_REPLY].tuple;
-	sic.protocol = (s32)orig_tuple.dst.protonum;
+	sic.ip_proto = (s32)orig_tuple.dst.protonum;
 
 	sic.flags = 0;
 
@@ -537,7 +546,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		sic.flags |= XFE_CREATE_FLAG_REMARK_DSCP;
 	}
 
-	switch (sic.protocol) {
+	switch (sic.ip_proto) {
 	case IPPROTO_TCP:
 		sic.src_port = orig_tuple.src.u.tcp.port;
 		sic.dest_port = orig_tuple.dst.u.tcp.port;
@@ -564,14 +573,9 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 
 	default:
 		xfe_incr_exceptions(XFE_EXCEPTION_UNKNOW_PROTOCOL);
-		DEBUG_TRACE("unhandled protocol %d\n", sic.protocol);
+		DEBUG_TRACE("unhandled protocol %d\n", sic.ip_proto);
 		return NF_ACCEPT;
 	}
-
-#ifdef CONFIG_XFRM
-	sic.original_accel = 1;
-	sic.reply_accel = 1;
-#endif
 
 	/*
 	 * Get QoS information
@@ -582,8 +586,8 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		sic.flags |= XFE_CREATE_FLAG_REMARK_PRIORITY;
 	}
 
-	DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-		    sic.protocol, &sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port);
+	// DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+	// 	    sic.ip_proto, &sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port);
 
 	/*
 	 * If we already have this connection in our list, skip it
@@ -591,7 +595,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 */
 	spin_lock_bh(&xfe_connections_lock);
 
-	conn = xfe_find_conn(&sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port, sic.protocol, is_v4);
+	conn = xfe_find_conn(&sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port, sic.ip_proto, is_v4);
 	if (conn) {
 		conn->hits++;
 
@@ -682,8 +686,8 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		dest_dev = dest_br_dev;
 	}
 
-	sic.src_dev = src_dev;
-	sic.dest_dev = dest_dev;
+	sic.src_ifindex = src_dev->ifindex;
+	sic.dest_ifindex = dest_dev->ifindex;
 
 	sic.src_mtu = src_dev->mtu;
 	sic.dest_mtu = dest_dev->mtu;
@@ -789,8 +793,6 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	struct nf_conn *ct = item->ct;
 	struct nf_conntrack_tuple orig_tuple;
 	struct xfe_connection *conn;
-	struct xfe_tuple fc_msg;
-	int offloaded = 0;
 	bool is_v4;
 
 	/*
@@ -804,13 +806,13 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	/*
 	 * If this is an untracked connection then we can't have any state either.
 	 */
-	if (unlikely(nf_ct_is_untracked(ct))) {
+	if (unlikely((ct->status & IPS_CONFIRMED) == 0)) {
 		DEBUG_TRACE("ignoring untracked conn\n");
 		return NOTIFY_DONE;
 	}
 
 	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	sid.protocol = (s32)orig_tuple.dst.protonum;
+	sid.ip_proto = (s32)orig_tuple.dst.protonum;
 
 	/*
 	 * Extract information from the conntrack connection.  We're only interested
@@ -825,7 +827,7 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 		return NOTIFY_DONE;
 	}
 
-	switch (sid.protocol) {
+	switch (sid.ip_proto) {
 	case IPPROTO_TCP:
 		sid.src_port = orig_tuple.src.u.tcp.port;
 		sid.dest_port = orig_tuple.dst.u.tcp.port;
@@ -837,7 +839,7 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 		break;
 
 	default:
-		DEBUG_TRACE("unhandled protocol: %d\n", sid.protocol);
+		DEBUG_TRACE("unhandled protocol: %d\n", sid.ip_proto);
 		return NOTIFY_DONE;
 	}
 
@@ -847,7 +849,7 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	if ((events & (1 << IPCT_MARK)) && (ct->mark != 0)) {
 		struct xfe_connection_mark mark;
 
-		mark.protocol = sid.protocol;
+		mark.protocol = sid.ip_proto;
 		mark.src_ip = sid.src_ip;
 		mark.dest_ip = sid.dest_ip;
 		mark.src_port = sid.src_port;
@@ -867,24 +869,11 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	}
 
 	DEBUG_TRACE("Try to clean up: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-		    sid.protocol, &sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port);
+		    sid.ip_proto, &sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port);
 
 	spin_lock_bh(&xfe_connections_lock);
 
-	conn = xfe_find_conn(&sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port, sid.protocol, is_v4);
-	if (conn && conn->offloaded) {
-		fc_msg.ethertype = AF_INET;
-		fc_msg.src_saddr.in = *((struct in_addr *)&conn->sic->src_ip);
-		fc_msg.dst_saddr.in = *((struct in_addr *)&conn->sic->dest_ip_xlate);
-
-		fc_msg.proto = conn->sic->protocol;
-		fc_msg.sport = conn->sic->src_port;
-		fc_msg.dport = conn->sic->dest_port_xlate;
-		memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
-		memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
-		offloaded = 1;
-	}
-
+	conn = xfe_find_conn(&sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port, sid.ip_proto, is_v4);
 	if (conn) {
 		DEBUG_TRACE("Free connection\n");
 
@@ -957,31 +946,32 @@ static void xfe_sync_rule(struct xfe_connection_sync *sis)
 		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
 		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
 
+	/* Native bridge NOT supported (can't update statistics) */
 	/*
 	 * Update packet count for ingress on bridge device
 	 */
-	if (skip_to_bridge_ingress) {
-		struct rtnl_link_stats64 nlstats;
-		nlstats.tx_packets = 0;
-		nlstats.tx_bytes = 0;
+	// if (skip_to_bridge_ingress) {
+	// 	struct rtnl_link_stats64 nlstats;
+	// 	nlstats.tx_packets = 0;
+	// 	nlstats.tx_bytes = 0;
 
-		if (sis->src_dev && IFF_EBRIDGE &&
-		    (sis->src_new_packet_count || sis->src_new_byte_count)) {
-			nlstats.rx_packets = sis->src_new_packet_count;
-			nlstats.rx_bytes = sis->src_new_byte_count;
-			spin_lock_bh(&xfe_connections_lock);
-			br_dev_update_stats(sis->src_dev, &nlstats);
-			spin_unlock_bh(&xfe_connections_lock);
-		}
-		if (sis->dest_dev && IFF_EBRIDGE &&
-		    (sis->dest_new_packet_count || sis->dest_new_byte_count)) {
-			nlstats.rx_packets = sis->dest_new_packet_count;
-			nlstats.rx_bytes = sis->dest_new_byte_count;
-			spin_lock_bh(&xfe_connections_lock);
-			br_dev_update_stats(sis->dest_dev, &nlstats);
-			spin_unlock_bh(&xfe_connections_lock);
-		}
-	}
+	// 	if (src_dev && IFF_EBRIDGE &&
+	// 	    (sis->src_new_packet_count || sis->src_new_byte_count)) {
+	// 		nlstats.rx_packets = sis->src_new_packet_count;
+	// 		nlstats.rx_bytes = sis->src_new_byte_count;
+	// 		spin_lock_bh(&xfe_connections_lock);
+	// 		br_dev_update_stats(src_dev, &nlstats);
+	// 		spin_unlock_bh(&xfe_connections_lock);
+	// 	}
+	// 	if (dest_dev && IFF_EBRIDGE &&
+	// 	    (sis->dest_new_packet_count || sis->dest_new_byte_count)) {
+	// 		nlstats.rx_packets = sis->dest_new_packet_count;
+	// 		nlstats.rx_bytes = sis->dest_new_byte_count;
+	// 		spin_lock_bh(&xfe_connections_lock);
+	// 		br_dev_update_stats(dest_dev, &nlstats);
+	// 		spin_unlock_bh(&xfe_connections_lock);
+	// 	}
+	// }
 
 	/*
 	 * Look up conntrack connection
@@ -993,14 +983,15 @@ static void xfe_sync_rule(struct xfe_connection_sync *sis)
 	}
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
-	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
 
 	/*
 	 * Only update if this is not a fixed timeout
 	 */
 	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
 		spin_lock_bh(&ct->lock);
-		ct->timeout.expires += sis->delta_jiffies;
+		/* TODO: handle timeout properly */
+		// ct->timeout.expires += sis->delta_jiffies;
+		WRITE_ONCE(ct->timeout, nfct_time_stamp + HZ * 2); // 2 OK?
 		spin_unlock_bh(&ct->lock);
 	}
 
@@ -1014,30 +1005,31 @@ static void xfe_sync_rule(struct xfe_connection_sync *sis)
 		spin_unlock_bh(&ct->lock);
 	}
 
-	switch (sis->protocol) {
-	case IPPROTO_TCP:
-		spin_lock_bh(&ct->lock);
-		if (ct->proto.tcp.seen[0].td_maxwin < sis->src_td_max_window) {
-			ct->proto.tcp.seen[0].td_maxwin = sis->src_td_max_window;
-		}
-		if ((s32)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
-			ct->proto.tcp.seen[0].td_end = sis->src_td_end;
-		}
-		if ((s32)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
-			ct->proto.tcp.seen[0].td_maxend = sis->src_td_max_end;
-		}
-		if (ct->proto.tcp.seen[1].td_maxwin < sis->dest_td_max_window) {
-			ct->proto.tcp.seen[1].td_maxwin = sis->dest_td_max_window;
-		}
-		if ((s32)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
-			ct->proto.tcp.seen[1].td_end = sis->dest_td_end;
-		}
-		if ((s32)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
-			ct->proto.tcp.seen[1].td_maxend = sis->dest_td_max_end;
-		}
-		spin_unlock_bh(&ct->lock);
-		break;
-	}
+	/* We don't care about this right now */
+	// switch (sis->protocol) {
+	// case IPPROTO_TCP:
+	// 	spin_lock_bh(&ct->lock);
+	// 	if (ct->proto.tcp.seen[0].td_maxwin < sis->src_td_max_window) {
+	// 		ct->proto.tcp.seen[0].td_maxwin = sis->src_td_max_window;
+	// 	}
+	// 	if ((s32)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
+	// 		ct->proto.tcp.seen[0].td_end = sis->src_td_end;
+	// 	}
+	// 	if ((s32)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
+	// 		ct->proto.tcp.seen[0].td_maxend = sis->src_td_max_end;
+	// 	}
+	// 	if (ct->proto.tcp.seen[1].td_maxwin < sis->dest_td_max_window) {
+	// 		ct->proto.tcp.seen[1].td_maxwin = sis->dest_td_max_window;
+	// 	}
+	// 	if ((s32)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
+	// 		ct->proto.tcp.seen[1].td_end = sis->dest_td_end;
+	// 	}
+	// 	if ((s32)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
+	// 		ct->proto.tcp.seen[1].td_maxend = sis->dest_td_max_end;
+	// 	}
+	// 	spin_unlock_bh(&ct->lock);
+	// 	break;
+	// }
 
 	/*
 	 * Release connection
@@ -1127,7 +1119,7 @@ static ssize_t xfe_get_debug_info(struct device *dev,
 		len += scnprintf(buf + len, PAGE_SIZE - len,
 				"o=%d, p=%d [%pM]:%pI4:%u %pI4:%u:[%pM] m=%08x h=%d\n",
 				conn->offloaded,
-				conn->sic->protocol,
+				conn->sic->ip_proto,
 				conn->sic->src_mac,
 				&conn->sic->src_ip,
 				conn->sic->src_port,
@@ -1211,6 +1203,9 @@ static const struct device_attribute xfe_exceptions_attr =
 static int __init xfe_init(void)
 {
 	struct xfe *sc = &__sc;
+	struct netlink_kernel_cfg cfg = {
+        .input = xfe_netlink_recv_msg,
+    };
 	int result = -1;
 
 	printk(KERN_ALERT "xfe: starting up\n");
@@ -1268,7 +1263,7 @@ static int __init xfe_init(void)
 	/*
 	 * Register our netfilter hooks.
 	 */
-	result = nf_register_hooks(xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
+	result = nf_register_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
 		goto exit3;
@@ -1285,6 +1280,13 @@ static int __init xfe_init(void)
 	}
 #endif
 
+	nl_sock = netlink_kernel_create(&init_net, NETLINK_TEST, &cfg);
+    if (nl_sock == NULL)
+    {
+        DEBUG_ERROR("error creating netlink socket\n");
+        goto exit5;
+    }
+
 	printk(KERN_ALERT "xfe: registered\n");
 
 	spin_lock_init(&sc->lock);
@@ -1292,8 +1294,11 @@ static int __init xfe_init(void)
 	/*
 	 * Hook the shortcut sync callback.
 	 */
-	xfe_ipv4_register_sync_rule_callback(xfe_sync_rule);
+	/* TODO .... */
 	return 0;
+
+exit6:
+	netlink_kernel_release(nl_sock);
 
 exit5:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -1301,7 +1306,7 @@ exit5:
 
 exit4:
 #endif
-	nf_unregister_hooks(xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
+	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
 
 exit3:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
@@ -1324,7 +1329,6 @@ exit1:
 static void __exit xfe_exit(void)
 {
 	struct xfe *sc = &__sc;
-	int result = -1;
 
 	DEBUG_INFO("XFE CM exit\n");
 	printk(KERN_ALERT "xfe: shutting down\n");
@@ -1332,7 +1336,7 @@ static void __exit xfe_exit(void)
 	/*
 	 * Unregister our sync callback.
 	 */
-	xfe_ipv4_register_sync_rule_callback(NULL);
+	/* TODO .... */
 
 	/*
 	 * Wait for all callbacks to complete.
@@ -1344,11 +1348,21 @@ static void __exit xfe_exit(void)
 	 */
 	xfe_ipv4_destroy_all_rules_for_dev(NULL);
 
+	/*
+	 * Clean up netlink
+	 */
+	netlink_kernel_release(nl_sock);
+
+	/*
+	 * Clean up BPF
+	 */
+	xfe_bpf_free();
+
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &xfe_conntrack_notifier);
 
 #endif
-	nf_unregister_hooks(xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
+	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
 
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
@@ -1359,7 +1373,7 @@ static void __exit xfe_exit(void)
 module_init(xfe_init);
 module_exit(xfe_exit);
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Tomaz Hribernik");
 MODULE_DESCRIPTION("XDP forwarding engine.");
 MODULE_VERSION("0.01");

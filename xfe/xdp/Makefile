@@ -18,3 +18,5 @@ all:
 	llc -march=bpf -filetype=obj -o xfe_accelerator.o xfe_accelerator.ll
 clean:
 	rm -rf xfe_accelerator.ll xfe_accelerator.o
+generate:
+	$(CLANG) -O2 -Wall $(BPF_CFLAGS) -g -target bpf -c xfe_accelerator.c -o xfe_accelerator.o

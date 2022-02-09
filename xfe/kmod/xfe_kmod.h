@@ -1,29 +1,5 @@
 #include <linux/if_ether.h>
-#include <linux/version.h>
 #include <net/netfilter/nf_conntrack_timeout.h>
-
-#define XFE_GENL_VERSION	(1)
-#define XFE_GENL_NAME	"FC"
-#define XFE_GENL_MCGRP	"FC_MCGRP"
-#define XFE_GENL_HDRSIZE	(0)
-
-enum {
-	XFE_A_UNSPEC,
-	XFE_A_TUPLE,
-	__XFE_A_MAX,
-};
-
-#define XFE_A_MAX (__XFE_A_MAX - 1)
-
-enum {
-	XFE_C_UNSPEC,
-	XFE_C_OFFLOAD,
-	XFE_C_OFFLOADED,
-	XFE_C_DONE,
-	__XFE_C_MAX,
-};
-
-#define XFE_C_MAX (__XFE_C_MAX - 1)
 
 struct xfe_tuple {
 	unsigned short ethertype;
@@ -141,163 +117,15 @@ static inline struct net_device *xfe_dev_get_master(struct net_device *dev)
 #endif
 #endif
 
-
-
-
-
-
-
-
-
-
-
-
-/*
- * connection flags.
- */
-#define XFE_CREATE_FLAG_NO_SEQ_CHECK BIT(0)
-					/* Indicates that we should not check sequence numbers */
-#define XFE_CREATE_FLAG_REMARK_PRIORITY BIT(1)
-					/* Indicates that we should remark priority of skb */
-#define XFE_CREATE_FLAG_REMARK_DSCP BIT(2)
-					/* Indicates that we should remark DSCP of packet */
-
-typedef union {
-	__be32			ip;
-} xfe_ip_addr_t;
-
-/*
- * connection creation structure.
- */
-struct xfe_connection_create {
-	int protocol;
-	struct net_device *src_dev;
-	struct net_device *dest_dev;
-	u32 flags;
-	u32 src_mtu;
-	u32 dest_mtu;
-	xfe_ip_addr_t src_ip;
-	xfe_ip_addr_t src_ip_xlate;
-	xfe_ip_addr_t dest_ip;
-	xfe_ip_addr_t dest_ip_xlate;
-	__be16 src_port;
-	__be16 src_port_xlate;
-	__be16 dest_port;
-	__be16 dest_port_xlate;
-	u8 src_mac[ETH_ALEN];
-	u8 src_mac_xlate[ETH_ALEN];
-	u8 dest_mac[ETH_ALEN];
-	u8 dest_mac_xlate[ETH_ALEN];
-	u8 src_td_window_scale;
-	u32 src_td_max_window;
-	u32 src_td_end;
-	u32 src_td_max_end;
-	u8 dest_td_window_scale;
-	u32 dest_td_max_window;
-	u32 dest_td_end;
-	u32 dest_td_max_end;
-	u32 mark;
-#ifdef CONFIG_XFRM
-	u32 original_accel;
-	u32 reply_accel;
-#endif
-	u32 src_priority;
-	u32 dest_priority;
-	u32 src_dscp;
-	u32 dest_dscp;
-};
-
-/*
- * connection destruction structure.
- */
-struct xfe_connection_destroy {
-	int protocol;
-	xfe_ip_addr_t src_ip;
-	xfe_ip_addr_t dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-};
-
-typedef enum xfe_sync_reason {
-	XFE_SYNC_REASON_STATS,	/* Sync is to synchronize stats */
-	XFE_SYNC_REASON_FLUSH,	/* Sync is to flush a entry */
-	XFE_SYNC_REASON_DESTROY	/* Sync is to destroy a entry(requested by connection manager) */
-} xfe_sync_reason_t;
-
-/*
- * Structure used to sync connection stats/state back within the system.
- *
- * NOTE: The addresses here are NON-NAT addresses, i.e. the true endpoint addressing.
- * 'src' is the creator of the connection.
- */
-struct xfe_connection_sync {
-	struct net_device *src_dev;
-	struct net_device *dest_dev;
-	int is_v6;			/* Is it for ipv6? */
-	int protocol;			/* IP protocol number (IPPROTO_...) */
-	xfe_ip_addr_t src_ip;		/* Non-NAT source address, i.e. the creator of the connection */
-	xfe_ip_addr_t src_ip_xlate;	/* NATed source address */
-	__be16 src_port;		/* Non-NAT source port */
-	__be16 src_port_xlate;		/* NATed source port */
-	xfe_ip_addr_t dest_ip;		/* Non-NAT destination address, i.e. to whom the connection was created */
-	xfe_ip_addr_t dest_ip_xlate;	/* NATed destination address */
-	__be16 dest_port;		/* Non-NAT destination port */
-	__be16 dest_port_xlate;		/* NATed destination port */
-	u32 src_td_max_window;
-	u32 src_td_end;
-	u32 src_td_max_end;
-	u64 src_packet_count;
-	u64 src_byte_count;
-	u32 src_new_packet_count;
-	u32 src_new_byte_count;
-	u32 dest_td_max_window;
-	u32 dest_td_end;
-	u32 dest_td_max_end;
-	u64 dest_packet_count;
-	u64 dest_byte_count;
-	u32 dest_new_packet_count;
-	u32 dest_new_byte_count;
-	u32 reason;		/* reason for stats sync message, i.e. destroy, flush, period sync */
-	u64 delta_jiffies;		/* Time to be added to the current timeout to keep the connection alive */
-};
-
-/*
- * connection mark structure
- */
-struct xfe_connection_mark {
-	int protocol;
-	xfe_ip_addr_t src_ip;
-	xfe_ip_addr_t dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-	u32 mark;
-};
-
-/*
- * Expose what should be a static flag in the TCP connection tracker.
- */
-extern int nf_ct_tcp_no_window_check;
-
-/*
- * This callback will be called in a timer
- * at 100 times per second to sync stats back to
- * Linux connection track.
- *
- * A RCU lock is taken to prevent this callback
- * from unregistering.
- */
-typedef void (*xfe_sync_rule_callback_t)(struct xfe_connection_sync *);
-
 /*
  * IPv4 APIs used by connection manager
  */
-int xfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb);
 int xfe_ipv4_create_rule(struct xfe_connection_create *sic);
 void xfe_ipv4_destroy_rule(struct xfe_connection_destroy *sid);
 void xfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
-void xfe_ipv4_register_sync_rule_callback(xfe_sync_rule_callback_t callback);
 void xfe_ipv4_update_rule(struct xfe_connection_create *sic);
 void xfe_ipv4_mark_rule(struct xfe_connection_mark *mark);
+int xfe_ipv4_sync_rules(struct xfe_connection_sync *syncs, int count, struct sk_buff **ret);
 
 /*
  * xfe_ipv4_addr_equal()
@@ -318,3 +146,9 @@ static inline int xfe_addr_equal(xfe_ip_addr_t *a,
 {
 	return xfe_ipv4_addr_equal(a->ip, b->ip);
 }
+
+/*
+ * Netlink
+ */
+void xfe_netlink_recv_msg(struct sk_buff *skb);
+void xfe_bpf_free(void);
