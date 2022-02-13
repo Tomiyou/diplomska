@@ -17,6 +17,8 @@
 #include <linux/spinlock.h>
 #include <linux/if_bridge.h>
 #include <linux/hashtable.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
 
 #include "xfe_types.h"
 #include "xfe_kmod.h"
@@ -321,64 +323,6 @@ xfe_find_conn(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
 }
 
 /*
- * xfe_sb_find_conn()
- * 	find a connection object in the hash table according to information of packet
- *	if not found, reverse the tuple and try again.
- *      @pre the xfe_connection_lock must be held before calling this function
- */
-static struct xfe_connection *
-xfe_sb_find_conn(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
-		 unsigned short sport, unsigned short dport,
-		 unsigned char proto, bool is_v4)
-{
-	struct xfe_connection_create *p_sic;
-	struct xfe_connection *conn;
-	u32 key;
-
-	key = fc_conn_hash(saddr, daddr, sport, dport, is_v4);
-
-	xfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
-		if (conn->is_v4 != is_v4) {
-			continue;
-		}
-
-		p_sic = conn->sic;
-
-		if (p_sic->ip_proto == proto &&
-		    p_sic->src_port == sport &&
-		    p_sic->dest_port_xlate == dport &&
-		    xfe_addr_equal(&p_sic->src_ip, saddr, is_v4) &&
-		    xfe_addr_equal(&p_sic->dest_ip_xlate, daddr, is_v4)) {
-			return conn;
-		}
-	}
-
-	/*
-	 * Reverse the tuple and try again
-	 */
-	key = fc_conn_hash(daddr, saddr, dport, sport, is_v4);
-
-	xfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
-		if (conn->is_v4 != is_v4) {
-			continue;
-		}
-
-		p_sic = conn->sic;
-
-		if (p_sic->ip_proto == proto &&
-		    p_sic->src_port == dport &&
-		    p_sic->dest_port_xlate == sport &&
-		    xfe_addr_equal(&p_sic->src_ip, daddr, is_v4) &&
-		    xfe_addr_equal(&p_sic->dest_ip_xlate, saddr, is_v4)) {
-			return conn;
-		}
-	}
-
-	DEBUG_TRACE("connection not found\n");
-	return NULL;
-}
-
-/*
  * xfe_add_conn()
  *	add a connection object in the hash table if no duplicate
  *	@conn connection to add
@@ -427,16 +371,15 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	struct net_device *in;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
-	struct net_device *dev;
 	struct net_device *src_dev;
 	struct net_device *dest_dev;
-	struct net_device *src_dev_tmp;
-	struct net_device *dest_dev_tmp;
-	struct net_device *src_br_dev = NULL;
-	struct net_device *dest_br_dev = NULL;
+	struct net_device *tmp_dev;
 	struct nf_conntrack_tuple orig_tuple;
 	struct nf_conntrack_tuple reply_tuple;
 	struct xfe_connection *conn;
+	struct iphdr *ip_header;
+	int packet_is_reply = false;
+	u32 dscp;
 
 	/* We only support IPv4 for now. */
 	if (!is_v4) {
@@ -518,13 +461,23 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 
 	sic.flags = 0;
 
-	/*
-	 * Get addressing information, non-NAT first
-	 */
-	u32 dscp;
+	ip_header = ip_hdr(skb);
 
-	sic.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
-	sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
+	/* Determine the direction of the current packet */
+	if (ip_header->saddr == (__be32)orig_tuple.dst.u3.ip) {
+		packet_is_reply = true;
+	}
+
+	/* Now get the info for the actual connection match */
+	if (packet_is_reply) {
+		sic.src_ip.ip = (__be32)reply_tuple.src.u3.ip;
+		sic.dest_ip.ip = (__be32)reply_tuple.dst.u3.ip;
+	} else {
+		sic.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+		sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
+	}
+	sic.xlate_src_ip.ip = ip_header->saddr;
+	sic.xlate_dest_ip.ip = ip_header->daddr;
 
 	if (ipv4_is_multicast(sic.src_ip.ip) || ipv4_is_multicast(sic.dest_ip.ip)) {
 		xfe_incr_exceptions(XFE_EXCEPTION_IS_IPV4_MCAST);
@@ -532,26 +485,25 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		return NF_ACCEPT;
 	}
 
-	/*
-		* NAT'ed addresses - note these are as seen from the 'reply' direction
-		* When NAT does not apply to this connection these will be identical to the above.
-		*/
-	sic.src_ip_xlate.ip = (__be32)reply_tuple.dst.u3.ip;
-	sic.dest_ip_xlate.ip = (__be32)reply_tuple.src.u3.ip;
-
-	dscp = ipv4_get_dsfield(ip_hdr(skb)) >> XT_DSCP_SHIFT;
+	dscp = ipv4_get_dsfield(ip_header) >> XT_DSCP_SHIFT;
 	if (dscp) {
-		sic.dest_dscp = dscp;
-		sic.src_dscp = sic.dest_dscp;
+		sic.xlate_dscp = dscp;
 		sic.flags |= XFE_CREATE_FLAG_REMARK_DSCP;
 	}
 
-	switch (sic.ip_proto) {
-	case IPPROTO_TCP:
-		sic.src_port = orig_tuple.src.u.tcp.port;
-		sic.dest_port = orig_tuple.dst.u.tcp.port;
-		sic.src_port_xlate = reply_tuple.dst.u.tcp.port;
-		sic.dest_port_xlate = reply_tuple.src.u.tcp.port;
+	/* Get layer 4 info */
+	if (sic.ip_proto == IPPROTO_TCP) {
+		struct tcphdr *tcp_header = tcp_hdr(skb);
+
+		if (packet_is_reply) {
+			sic.src_port = reply_tuple.src.u.tcp.port;
+			sic.dest_port = reply_tuple.dst.u.tcp.port;
+		} else {
+			sic.src_port = orig_tuple.src.u.tcp.port;
+			sic.dest_port = orig_tuple.dst.u.tcp.port;
+		}
+		sic.xlate_src_port = tcp_header->source;
+		sic.xlate_dest_port = tcp_header->dest;
 
 		/*
 		 * Don't try to manage a non-established connection.
@@ -562,16 +514,20 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 			return NF_ACCEPT;
 		}
 
-		break;
+	} else if (sic.ip_proto == IPPROTO_UDP) {
+		struct udphdr *udp_header = udp_hdr(skb);
 
-	case IPPROTO_UDP:
-		sic.src_port = orig_tuple.src.u.udp.port;
-		sic.dest_port = orig_tuple.dst.u.udp.port;
-		sic.src_port_xlate = reply_tuple.dst.u.udp.port;
-		sic.dest_port_xlate = reply_tuple.src.u.udp.port;
-		break;
+		if (packet_is_reply) {
+			sic.src_port = reply_tuple.src.u.udp.port;
+			sic.dest_port = reply_tuple.dst.u.udp.port;
+		} else {
+			sic.src_port = orig_tuple.src.u.udp.port;
+			sic.dest_port = orig_tuple.dst.u.udp.port;
+		}
+		sic.xlate_src_port = udp_header->source;
+		sic.xlate_dest_port = udp_header->dest;
 
-	default:
+	} else {
 		xfe_incr_exceptions(XFE_EXCEPTION_UNKNOW_PROTOCOL);
 		DEBUG_TRACE("unhandled protocol %d\n", sic.ip_proto);
 		return NF_ACCEPT;
@@ -581,13 +537,12 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	 * Get QoS information
 	 */
 	if (skb->priority) {
-		sic.dest_priority = skb->priority;
-		sic.src_priority = sic.dest_priority;
+		sic.xlate_priority = skb->priority;
 		sic.flags |= XFE_CREATE_FLAG_REMARK_PRIORITY;
 	}
 
-	// DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-	// 	    sic.ip_proto, &sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port);
+	DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+		    sic.ip_proto, &sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port);
 
 	/*
 	 * If we already have this connection in our list, skip it
@@ -634,64 +589,59 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 
 	spin_unlock_bh(&xfe_connections_lock);
 
-	/*
-	 * Get the net device and MAC addresses that correspond to the various source and
-	 * destination host addresses.
-	 */
-	if (!xfe_find_dev_and_mac_addr(&sic.src_ip, &src_dev_tmp, sic.src_mac, is_v4)) {
-		xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_DEV);
+	/* Get destination device straight from current packet */
+	dest_dev = skb->dev;
+	sic.dest_ifindex = dest_dev->ifindex;
+	sic.dest_mtu = dest_dev->mtu;
+	memcpy(sic.xlate_src_mac, dest_dev->dev_addr, ETH_ALEN);
+
+	/* Use xlate_dest_mac temporarily (will be overwritten) */
+	/* Get source device using packets source IP (address before routing) */
+	if (!xfe_find_dev_and_mac_addr(&sic.src_ip, &src_dev, sic.xlate_dest_mac, is_v4)) {
+		// xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_DEV);
 		return NF_ACCEPT;
 	}
-	src_dev = src_dev_tmp;
-
-	if (!xfe_find_dev_and_mac_addr(&sic.src_ip_xlate, &dev, sic.src_mac_xlate, is_v4)) {
-		xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_XLATE_DEV);
-		goto done1;
-	}
-	dev_put(dev);
-
-	if (!xfe_find_dev_and_mac_addr(&sic.dest_ip, &dev, sic.dest_mac, is_v4)) {
-		xfe_incr_exceptions(XFE_EXCEPTION_NO_DEST_DEV);
-		goto done1;
-	}
-	dev_put(dev);
-
-	if (!xfe_find_dev_and_mac_addr(&sic.dest_ip_xlate, &dest_dev_tmp, sic.dest_mac_xlate, is_v4)) {
-		xfe_incr_exceptions(XFE_EXCEPTION_NO_DEST_XLATE_DEV);
-		goto done1;
-	}
-	dest_dev = dest_dev_tmp;
-
-	/*
-	 * Our devices may actually be part of a bridge interface. If that's
-	 * the case then find the bridge interface instead.
-	 */
-	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
-		src_br_dev = xfe_dev_get_master(src_dev);
-		if (!src_br_dev) {
-			xfe_incr_exceptions(XFE_EXCEPTION_NO_BRIDGE);
-			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
-			goto done2;
-		}
-		src_dev = src_br_dev;
-	}
-
-	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
-		dest_br_dev = xfe_dev_get_master(dest_dev);
-		if (!dest_br_dev) {
-			xfe_incr_exceptions(XFE_EXCEPTION_NO_BRIDGE);
-			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
-			goto done3;
-		}
-		dest_dev = dest_br_dev;
-	}
-
 	sic.src_ifindex = src_dev->ifindex;
-	sic.dest_ifindex = dest_dev->ifindex;
-
 	sic.src_mtu = src_dev->mtu;
-	sic.dest_mtu = dest_dev->mtu;
+	dev_put(src_dev);
 
+	if (!xfe_find_dev_and_mac_addr(&sic.xlate_dest_ip, &tmp_dev, sic.xlate_dest_mac, is_v4)) {
+		// xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_DEV);
+		return NF_ACCEPT;
+	}
+	dev_put(tmp_dev);
+
+	DEBUG_TRACE("Packet with tuple (%d) %pI4 -> %pI4 | %pI4 -> %pI4 (%pM -> %pM)\n",
+		packet_is_reply, &sic.src_ip.ip, &sic.dest_ip.ip,
+		&sic.xlate_src_ip.ip, &sic.xlate_dest_ip.ip,
+		sic.xlate_src_mac, sic.xlate_dest_mac);
+
+	/* Bridge not supported right now */
+// 	/*
+// 	 * Our devices may actually be part of a bridge interface. If that's
+// 	 * the case then find the bridge interface instead.
+// 	 */
+// 	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
+// 		src_br_dev = xfe_dev_get_master(src_dev);
+// 		if (!src_br_dev) {
+// 			xfe_incr_exceptions(XFE_EXCEPTION_NO_BRIDGE);
+// 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
+// 			goto done2;
+// 		}
+// 		src_dev = src_br_dev;
+// 	}
+
+// 	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
+// 		dest_br_dev = xfe_dev_get_master(dest_dev);
+// 		if (!dest_br_dev) {
+// 			xfe_incr_exceptions(XFE_EXCEPTION_NO_BRIDGE);
+// 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
+// 			goto done3;
+// 		}
+// 		dest_dev = dest_br_dev;
+// 	}
+
+	/* SKB packet mark */
 	if (skb->mark) {
 		DEBUG_TRACE("SKB MARK NON ZERO %x\n", skb->mark);
 	}
@@ -700,21 +650,22 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	conn = kmalloc(sizeof(*conn), GFP_ATOMIC);
 	if (!conn) {
 		printk(KERN_CRIT "ERROR: no memory for xfe\n");
-		goto done4;
+		return NF_ACCEPT;
 	}
 	conn->hits = 0;
 	conn->offload_permit = 0;
 	conn->offloaded = 0;
 	conn->is_v4 = is_v4;
-	DEBUG_TRACE("Source MAC=%pM\n", sic.src_mac);
-	memcpy(conn->smac, sic.src_mac, ETH_ALEN);
-	memcpy(conn->dmac, sic.dest_mac_xlate, ETH_ALEN);
+	/* Don't know what this is used for */
+	// DEBUG_TRACE("Source MAC=%pM\n", sic.src_mac);
+	// memcpy(conn->smac, sic.src_mac, ETH_ALEN);
+	// memcpy(conn->dmac, sic.dest_mac_xlate, ETH_ALEN);
 
 	p_sic = kmalloc(sizeof(*p_sic), GFP_ATOMIC);
 	if (!p_sic) {
 		printk(KERN_CRIT "ERROR: no memory for xfe\n");
 		kfree(conn);
-		goto done4;
+		return NF_ACCEPT;
 	}
 
 	memcpy(p_sic, &sic, sizeof(sic));
@@ -725,22 +676,6 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		kfree(conn->sic);
 		kfree(conn);
 	}
-
-	/*
-	 * If we had bridge ports then release them too.
-	 */
-done4:
-	if (dest_br_dev) {
-		dev_put(dest_br_dev);
-	}
-done3:
-	if (src_br_dev) {
-		dev_put(src_br_dev);
-	}
-done2:
-	dev_put(dest_dev_tmp);
-done1:
-	dev_put(src_dev_tmp);
 
 	return NF_ACCEPT;
 }
@@ -776,77 +711,48 @@ static void xfe_update_mark(struct xfe_connection_mark *mark, bool is_v4)
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 /*
- * xfe_conntrack_event()
+ * xfe_handle_conntrack_event()
  *	Callback event invoked when a conntrack connection's state changes.
  */
-#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-static int xfe_conntrack_event(struct notifier_block *this,
-					   unsigned long events, void *ptr)
-#else
-static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
-#endif
+static void xfe_handle_conntrack_event(struct nf_conntrack_tuple *orig_tuple, unsigned long events,
+									   bool is_v4, __u8 ip_proto, __u32 ct_mark)
 {
-#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	struct nf_ct_event *item = ptr;
-#endif
 	struct xfe_connection_destroy sid;
-	struct nf_conn *ct = item->ct;
-	struct nf_conntrack_tuple orig_tuple;
 	struct xfe_connection *conn;
-	bool is_v4;
 
-	/*
-	 * If we don't have a conntrack entry then we're done.
-	 */
-	if (unlikely(!ct)) {
-		DEBUG_WARN("no ct in conntrack event callback\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
-	 * If this is an untracked connection then we can't have any state either.
-	 */
-	if (unlikely((ct->status & IPS_CONFIRMED) == 0)) {
-		DEBUG_TRACE("ignoring untracked conn\n");
-		return NOTIFY_DONE;
-	}
-
-	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	sid.ip_proto = (s32)orig_tuple.dst.protonum;
-
+	sid.ip_proto = ip_proto;
 	/*
 	 * Extract information from the conntrack connection.  We're only interested
 	 * in nominal connection information (i.e. we're ignoring any NAT information).
 	 */
-	if (likely(nf_ct_l3num(ct) == AF_INET)) {
-		sid.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
-		sid.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
-		is_v4 = true;
+	if (is_v4) {
+		sid.src_ip.ip = (__be32)orig_tuple->src.u3.ip;
+		sid.dest_ip.ip = (__be32)orig_tuple->dst.u3.ip;
 	} else {
 		DEBUG_TRACE("ignoring non-IPv4 connection\n");
-		return NOTIFY_DONE;
+		return;
 	}
 
 	switch (sid.ip_proto) {
 	case IPPROTO_TCP:
-		sid.src_port = orig_tuple.src.u.tcp.port;
-		sid.dest_port = orig_tuple.dst.u.tcp.port;
+		sid.src_port = orig_tuple->src.u.tcp.port;
+		sid.dest_port = orig_tuple->dst.u.tcp.port;
 		break;
 
 	case IPPROTO_UDP:
-		sid.src_port = orig_tuple.src.u.udp.port;
-		sid.dest_port = orig_tuple.dst.u.udp.port;
+		sid.src_port = orig_tuple->src.u.udp.port;
+		sid.dest_port = orig_tuple->dst.u.udp.port;
 		break;
 
 	default:
 		DEBUG_TRACE("unhandled protocol: %d\n", sid.ip_proto);
-		return NOTIFY_DONE;
+		return;
 	}
 
 	/*
 	 * Check for an updated mark
 	 */
-	if ((events & (1 << IPCT_MARK)) && (ct->mark != 0)) {
+	if ((events & (1 << IPCT_MARK)) && (ct_mark != 0)) {
 		struct xfe_connection_mark mark;
 
 		mark.protocol = sid.ip_proto;
@@ -854,7 +760,7 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 		mark.dest_ip = sid.dest_ip;
 		mark.src_port = sid.src_port;
 		mark.dest_port = sid.dest_port;
-		mark.mark = ct->mark;
+		mark.mark = ct_mark;
 
 		xfe_ipv4_mark_rule(&mark);
 		xfe_update_mark(&mark, is_v4);
@@ -865,7 +771,7 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	 */
 	if (unlikely(!(events & (1 << IPCT_DESTROY)))) {
 		DEBUG_TRACE("ignoring non-destroy event\n");
-		return NOTIFY_DONE;
+		return;
 	}
 
 	DEBUG_TRACE("Try to clean up: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
@@ -889,6 +795,55 @@ static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
 
 	xfe_ipv4_destroy_rule(&sid);
 
+	return;
+}
+
+/*
+ * xfe_conntrack_event()
+ *	Callback event invoked when a conntrack connection's state changes.
+ */
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+static int xfe_conntrack_event(struct notifier_block *this,
+					   unsigned long events, void *ptr)
+#else
+static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
+#endif
+{
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+	struct nf_ct_event *item = ptr;
+#endif
+	struct nf_conn *ct = item->ct;
+	struct nf_conntrack_tuple ct_tuple;
+	__u8 ip_proto;
+	bool is_v4;
+
+	/*
+	 * If we don't have a conntrack entry then we're done.
+	 */
+	if (unlikely(!ct)) {
+		DEBUG_WARN("no ct in conntrack event callback\n");
+		return NOTIFY_DONE;
+	}
+
+	/*
+	 * If this is an untracked connection then we can't have any state either.
+	 */
+	if (unlikely((ct->status & IPS_CONFIRMED) == 0)) {
+		DEBUG_TRACE("ignoring untracked conn\n");
+		return NOTIFY_DONE;
+	}
+
+	is_v4 = nf_ct_l3num(ct) == AF_INET;
+
+	/* Original direction */
+	ct_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
+	ip_proto = (s32)ct_tuple.dst.protonum;
+	xfe_handle_conntrack_event(&ct_tuple, events, is_v4, ip_proto, ct->mark);
+
+	/* Reply direction */
+	ct_tuple = ct->tuplehash[IP_CT_DIR_REPLY].tuple;
+	ip_proto = (s32)ct_tuple.dst.protonum;
+	xfe_handle_conntrack_event(&ct_tuple, events, is_v4, ip_proto, ct->mark);
 	return NOTIFY_DONE;
 }
 
@@ -1120,12 +1075,12 @@ static ssize_t xfe_get_debug_info(struct device *dev,
 				"o=%d, p=%d [%pM]:%pI4:%u %pI4:%u:[%pM] m=%08x h=%d\n",
 				conn->offloaded,
 				conn->sic->ip_proto,
-				conn->sic->src_mac,
+				conn->sic->xlate_src_mac,
 				&conn->sic->src_ip,
 				conn->sic->src_port,
 				&conn->sic->dest_ip,
 				conn->sic->dest_port,
-				conn->sic->dest_mac_xlate,
+				conn->sic->xlate_dest_mac,
 				conn->sic->mark,
 				conn->hits);
 	}

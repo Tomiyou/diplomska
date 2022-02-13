@@ -40,10 +40,10 @@
 /* This map stores all the accelerated XFE flows
  */
 struct {
-        __uint(type, BPF_MAP_TYPE_HASH);
-        __type(key, __u32);
-        __type(value, struct xfe_flow);
-        __uint(max_entries, HASH_SIZE);
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u32);
+	__type(value, struct xfe_flow);
+	__uint(max_entries, HASH_SIZE);
 } xfe_flows SEC(".maps");
 
 struct xfe_instance {
@@ -51,14 +51,14 @@ struct xfe_instance {
 	struct bpf_spin_lock lock;
 
 	/* Stats */
-	__u32 connection_create_requests;		/* Number of connection create requests */
+	__u32 connection_create_requests;	/* Number of connection create requests */
 	__u32 connection_create_collisions;	/* Number of connection create requests that collided with existing hash table entries */
 	__u32 connection_destroy_requests;	/* Number of connection destroy requests */
-	__u32 connection_destroy_misses;		/* Number of connection destroy requests that missed our hash table */
-	__u32 connection_match_hash_hits;		/* Number of connection match hash hits */
+	__u32 connection_destroy_misses;	/* Number of connection destroy requests that missed our hash table */
+	__u32 connection_match_hash_hits;	/* Number of connection match hash hits */
 	__u32 connection_match_hash_reorders;	/* Number of connection match hash reorders */
-	__u32 connection_flushes;			/* Number of connection flushes */
-	__u32 packets_forwarded;			/* Number of packets forwarded */
+	__u32 connection_flushes;		/* Number of connection flushes */
+	__u32 packets_forwarded;		/* Number of packets forwarded */
 	__u32 packets_not_forwarded;		/* Number of packets not forwarded */
 	__u32 xfe_exceptions;			/* Number of xfe exceptions that occurred */
 };
@@ -66,12 +66,21 @@ struct xfe_instance {
 /* This is just a map with a global lock for concurrency
  */
 struct {
-        __uint(type, BPF_MAP_TYPE_ARRAY);
-        __type(key, __u32);
-        __type(value, struct xfe_instance);
-        __uint(max_entries, 2);
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__type(key, __u32);
+	__type(value, struct xfe_instance);
+	__uint(max_entries, 1);
 } xfe_global_instance SEC(".maps");
 
+/* Map for storing large structs
+ * This is how we get around the 512 byte stack limit
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__type(key, __u32);
+	__type(value, struct xfe_flow);
+	__uint(max_entries, 1);
+} xfe_flow_create SEC(".maps");
 
 static __u32 instance_index = 0;
 
@@ -154,7 +163,8 @@ __u32 get_flow_hash(__u8 ip_proto, __be32 src_ip,
 
 static __always_inline
 struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
-			     __be16 src_port, __be16 dest_port)
+			     __be16 src_port, __be16 dest_port,
+			     __u32 ingress_ifindex)
 {
 	struct xfe_flow *flow;
 	__u32 hash = get_flow_hash(ip_proto, src_ip, dest_ip,
@@ -163,7 +173,8 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 	/* First check if we can actually find the flow in the hashmap */
 	flow = bpf_map_lookup_elem(&xfe_flows, &hash);
 	if (flow == NULL) {
-		bpf_printk("bpf_map_lookup_elem returned NULL");
+		bpf_printk("Lookup fail %x %x %x", ip_proto, src_ip, dest_ip);
+		// bpf_printk("bpf_map_lookup_elem returned NULL for hash %x", hash);
 		return NULL;
 	}
 
@@ -171,11 +182,12 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 	 * having different interfaces or different destination MACs.
 	 * Therefore it is pointless to compare those two things
 	 */
-	if (flow->match_ip_proto == ip_proto &&
-	    flow->match_src_ip == src_ip &&
-	    flow->match_dest_ip == dest_ip &&
-	    flow->match_src_port == src_port &&
-	    flow->match_dest_port == dest_port) 
+	if (flow->ifindex == ingress_ifindex &&
+	    flow->ip_proto == ip_proto &&
+	    flow->src_ip == src_ip &&
+	    flow->dest_ip == dest_ip &&
+	    flow->src_port == src_port &&
+	    flow->dest_port == dest_port) 
 	{
 		return flow;
 	}
@@ -233,7 +245,8 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		frame_pointer += sizeof(*tcp_hdr);
 
 		flow = lookup_flow(ip_hdr->protocol, ip_hdr->saddr, ip_hdr->daddr,
-				   tcp_hdr->source, tcp_hdr->dest);
+				   tcp_hdr->source, tcp_hdr->dest,
+				   ctx->ingress_ifindex);
 	} else if (ip_hdr->protocol == IPPROTO_UDP) {
 		struct udphdr *udp_hdr;
 
@@ -246,13 +259,14 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		frame_pointer += sizeof(*udp_hdr);
 
 		flow = lookup_flow(ip_hdr->protocol, ip_hdr->saddr, ip_hdr->daddr,
-				   udp_hdr->source, udp_hdr->dest);
+				   udp_hdr->source, udp_hdr->dest,
+				   ctx->ingress_ifindex);
 	} else {
 		goto out;
 	}
 
 	if (!flow) {
-		bpf_printk("Flow lookup failed.");
+		// bpf_printk("Flow lookup failed.");
 		goto out;
 	}
 
@@ -274,6 +288,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 	void *data = (void *)(long)skb->data;
 	void *data_end = (void *)(long)skb->data_end;
 	struct xfe_instance *xfe;
+	long err = 0;
 
 	/* Instructions on what to do */
 	struct xfe_kmod_message *msg;
@@ -283,77 +298,103 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 	 * is after data_end. */
 	if (data + msg_size > data_end) {
 		bpf_printk("netfilter_hook_fn: data bound check failed!");
-		return 0;
+		return -1;
 	}
 
 	msg = (struct xfe_kmod_message *) data;
-	bpf_printk("netfilter_hook_fn: recevied action %u", msg->action);
 
 	if (msg->action == XFE_KMOD_INSERT) {
 		struct xfe_connection_create *create = &msg->create;
-		struct xfe_flow flow;
+		struct xfe_flow *flow;
 		__u32 flow_hash = 0;
 
 		memset(&flow, 0, sizeof(flow));
 
-		/* Build flow entry */
-		flow.match_ifindex = create->src_ifindex;
-		flow.match_eth_proto = create->eth_proto;
-		memcpy(flow.match_src_mac, create->src_mac, ETH_ALEN);
-		memcpy(flow.match_dst_mac, create->dest_mac, ETH_ALEN);
-		flow.match_ip_proto = create->ip_proto;
-		flow.match_src_ip = create->src_ip.ip;
-		flow.match_dest_ip = create->dest_ip.ip;
-		flow.match_src_port = create->src_port;
-		flow.match_dest_port = create->dest_port;
+		/* Flow hash is always 0 here so use it to lookup xfe_flow struct */
+		flow = bpf_map_lookup_elem(&xfe_flow_create, &flow_hash);
+		if (flow == NULL) {
+			bpf_printk("Error getting stack bypass struct");
+			return -1;
+		}
 
-		flow.is_bridged = false;
+		/* Flow match info */
+		flow->ifindex = create->src_ifindex;
+		flow->eth_proto = create->eth_proto;
+		flow->ip_proto = create->ip_proto;
+		flow->src_ip = create->src_ip.ip;
+		flow->dest_ip = create->dest_ip.ip;
+		flow->src_port = create->src_port;
+		flow->dest_port = create->dest_port;
 
-		flow.xmit_ifindex = create->dest_ifindex;
-		memcpy(flow.xlate_src_mac, create->src_mac_xlate, ETH_ALEN);
-		memcpy(flow.xlate_dst_mac, create->dest_mac_xlate, ETH_ALEN);
-		flow.xlate_src_ip = create->src_ip_xlate.ip;
-		flow.xlate_dest_ip = create->dest_ip_xlate.ip;
-		flow.xlate_src_port = create->src_port_xlate;
-		flow.xlate_dest_port = create->dest_port_xlate;
+		flow->is_bridged = false;
+
+		/* Flow xlate info */
+		flow->xmit_ifindex = create->dest_ifindex;
+		memcpy(flow->xlate_src_mac, create->src_mac_xlate, ETH_ALEN);
+		memcpy(flow->xlate_dst_mac, create->dest_mac_xlate, ETH_ALEN);
+		flow->xlate_src_ip = create->src_ip_xlate.ip;
+		flow->xlate_dest_ip = create->dest_ip_xlate.ip;
+		flow->xlate_src_port = create->src_port_xlate;
+		flow->xlate_dest_port = create->dest_port_xlate;
+
+		/* Flow conntrack info */
+		flow->ct_src_ip = create->ct_src_ip.ip;
+		flow->ct_dest_ip = create->ct_dest_ip.ip;
+		flow->ct_src_port = create->ct_src_port;
+		flow->ct_dest_port = create->ct_dest_port;
 
 		/* Stats */
-		flow.packet_count = 0;
-		flow.byte_count = 0;
+		flow->packet_count = 0;
+		flow->byte_count = 0;
 
 		/* Flags */
-		flow.flags = 0;
+		flow->flags = 0;
 		if (create->flags & XFE_CREATE_FLAG_REMARK_PRIORITY) {
-			flow.priority = create->dest_priority;
-			flow.flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
+			flow->priority = create->dest_priority;
+			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
 		}
 		if (create->flags & XFE_CREATE_FLAG_REMARK_DSCP) {
-			flow.dscp = create->dest_dscp << XFE_IPV4_DSCP_SHIFT;
-			flow.flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK;
+			flow->dscp = create->dest_dscp << XFE_IPV4_DSCP_SHIFT;
+			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 		}
-		if (create->dest_ip.ip != create->dest_ip_xlate.ip || create->dest_port != create->dest_port_xlate) {
-			flow.flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST;
+		if (create->dest_ip.ip != create->dest_ip_xlate.ip ||
+			create->dest_port != create->dest_port_xlate) {
+			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST;
 		}
-		if (create->src_ip.ip != create->src_ip_xlate.ip || create->src_port != create->src_port_xlate) {
-			flow.flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC;
+		if (create->src_ip.ip != create->src_ip_xlate.ip ||
+			create->src_port != create->src_port_xlate) {
+			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC;
 		}
 
 		/* Get flow hash for the passed connection */
 		flow_hash = get_flow_hash(create->ip_proto, create->src_ip.ip,
 					  create->dest_ip.ip, create->src_port,
 					  create->dest_port);
+		bpf_printk("L3 details %x %x %x", create->ip_proto, create->src_ip.ip, create->dest_ip.ip);
+		bpf_printk("L4 details %x %x", create->src_port, create->dest_port);
 		bpf_printk("netfilter_hook_fn: create hash %x", flow_hash);
+		flow->hash = flow_hash;
 
 		/* Insert flow into hash table */
-		bpf_map_update_elem(&xfe_flows, &flow_hash, &flow, BPF_NOEXIST);
-
-		/* Flow already exists */
-		xfe = bpf_map_lookup_elem(&xfe_global_instance, &instance_index);
-		if (xfe) {
-			bpf_spin_lock(&xfe->lock);
-			xfe->connection_create_collisions++;
-			bpf_spin_unlock(&xfe->lock);
+		err = bpf_map_update_elem(&xfe_flows, &flow_hash, flow, BPF_NOEXIST);
+		if (err) {
+			/* TODO: handle hash collisions */
+			bpf_printk("bpf_map_update_elem failed, flow already exists");
 		}
+
+		/* Update stats */
+		xfe = bpf_map_lookup_elem(&xfe_global_instance, &instance_index);
+		if (!xfe) {
+			return err;
+		}
+
+		bpf_spin_lock(&xfe->lock);
+		xfe->connection_create_requests++;
+		if (err) {
+			xfe->connection_create_collisions++;
+		}
+		bpf_spin_unlock(&xfe->lock);
+		return err;
 	} else if (msg->action == XFE_KMOD_DESTROY) {
 		struct xfe_connection_destroy *destroy = &msg->destroy;
 		__u32 flow_hash;
@@ -365,17 +406,22 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		bpf_printk("netfilter_hook_fn: destroy hash %x", flow_hash);
 
 		/* Remove flow from hash table */
-		if (bpf_map_delete_elem(&xfe_flows, &flow_hash) == 0) {
-			return 0;
+		err = bpf_map_delete_elem(&xfe_flows, &flow_hash);
+
+		/* Update stats */
+		xfe = bpf_map_lookup_elem(&xfe_global_instance, &instance_index);
+		if (!xfe) {
+			return err;
 		}
 
-		/* Flow was already deleted */
-		xfe = bpf_map_lookup_elem(&xfe_global_instance, &instance_index);
-		if (xfe) {
-			bpf_spin_lock(&xfe->lock);
+		bpf_spin_lock(&xfe->lock);
+		xfe->connection_destroy_requests++;
+		if (err) {
 			xfe->connection_destroy_misses++;
-			bpf_spin_unlock(&xfe->lock);
 		}
+		bpf_spin_unlock(&xfe->lock);
+		return err;
+	} else if (msg->action == XFE_KMOD_UPDATE) {
 	} else {
 		bpf_printk("netfilter_hook_fn: unknown action received %u", msg->action);
 	}

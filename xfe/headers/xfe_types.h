@@ -37,15 +37,13 @@ struct xfe_flow {
 	struct bpf_spin_lock lock;		/* Spinlock for every entry */
 
 	/* Fields for matching packet to a flow */
-	__u32 match_ifindex;			/* Network device */
-	__be16 match_eth_proto;			/* Ethernet protocol */
-	unsigned char match_src_mac[ETH_ALEN];	/* Destination MAC */
-	unsigned char match_dst_mac[ETH_ALEN];	/* Destination MAC */
-	__u8   match_ip_proto;			/* IP protocol */
-	__be32 match_src_ip;			/* Source IP address */
-	__be32 match_dest_ip;			/* Destination IP address */
-	__be16 match_src_port;			/* Source port/connection ident */
-	__be16 match_dest_port;			/* Destination port/connection ident */
+	__u32 ifindex;				/* Network device */
+	__be16 eth_proto;			/* Ethernet protocol */
+	__u8 ip_proto;				/* IP protocol */
+	__be32 src_ip;				/* Source IP address */
+	__be32 dest_ip;				/* Destination IP address */
+	__be16 src_port;			/* Source port/connection ident */
+	__be16 dest_port;			/* Destination port/connection ident */
 
 	/* Remember if we need to do NAT */
 	bool is_bridged;
@@ -59,6 +57,12 @@ struct xfe_flow {
 	__be16 xlate_src_port;			/* Source port/connection ident */
 	__be16 xlate_dest_port;			/* Destination port/connection ident */
 
+	/* Conntrack entry info */
+	__be32 ct_src_ip;	/* Conntrack source IP */
+	__be32 ct_dest_ip;	/* Conntrack destination IP */
+	__be16 ct_src_port;	/* Conntrack source port */
+	__be16 ct_dest_port;	/* Conntrack destination port */
+
 	/* Stats */
 	__u32 packet_count;
 	__u32 byte_count;
@@ -69,6 +73,8 @@ struct xfe_flow {
 	__u32 mark;
 	__u32 priority;
 	__u32 dscp;
+
+	__u32 hash;
 };
 
 #define XFE_CREATE_FLAG_NO_SEQ_CHECK (1<<0)
@@ -83,7 +89,7 @@ typedef union {
 } xfe_ip_addr_t;
 
 /*
- * connection creation structure.
+ * Connection creation structure.
  */
 struct xfe_connection_create {
 	/* Interfaces */
@@ -92,35 +98,31 @@ struct xfe_connection_create {
 	__u32 dest_ifindex;
 	__u32 dest_mtu;
 
-	/* MAC header */
-	__be16 eth_proto;
-	__u8 src_mac[ETH_ALEN];
-	__u8 dest_mac[ETH_ALEN];
-	__u8 src_mac_xlate[ETH_ALEN];
-	__u8 dest_mac_xlate[ETH_ALEN];
-
-	/* IP header */
+	/* Packet match info */
+	__u16 eth_proto;
 	__u8 ip_proto;
 	xfe_ip_addr_t src_ip;
 	xfe_ip_addr_t dest_ip;
-	xfe_ip_addr_t src_ip_xlate;
-	xfe_ip_addr_t dest_ip_xlate;
 	__be16 src_port;
-	__be16 src_port_xlate;
 	__be16 dest_port;
-	__be16 dest_port_xlate;
+
+	/* Packet translate info */
+	__u8 xlate_src_mac[ETH_ALEN];
+	__u8 xlate_dest_mac[ETH_ALEN];
+	xfe_ip_addr_t xlate_src_ip;
+	xfe_ip_addr_t xlate_dest_ip;
+	__be16 xlate_src_port;
+	__be16 xlate_dest_port;
 
 	/* QoS */
 	__u32 flags;
 	__u32 mark;
-	__u32 src_priority;
-	__u32 dest_priority;
-	__u32 src_dscp;
-	__u32 dest_dscp;
+	__u32 xlate_priority;
+	__u32 xlate_dscp;
 };
 
 /*
- * connection destruction structure.
+ * Connection destruction structure.
  */
 struct xfe_connection_destroy {
 	__u8 ip_proto;
@@ -168,7 +170,7 @@ struct xfe_connection_sync {
 };
 
 /*
- * connection mark structure
+ * Connection mark structure
  */
 struct xfe_connection_mark {
 	int protocol;
@@ -188,6 +190,9 @@ enum xfe_kmod_action {
 	XFE_KMOD_FLUSH
 };
 
+/* 
+ * Message structure for passing between kernel module and XDP
+ */
 struct xfe_kmod_message {
 	enum xfe_kmod_action action;
 	union {
