@@ -57,12 +57,6 @@ struct xfe_flow {
 	__be16 xlate_src_port;			/* Source port/connection ident */
 	__be16 xlate_dest_port;			/* Destination port/connection ident */
 
-	/* Conntrack entry info */
-	__be32 ct_src_ip;	/* Conntrack source IP */
-	__be32 ct_dest_ip;	/* Conntrack destination IP */
-	__be16 ct_src_port;	/* Conntrack source port */
-	__be16 ct_dest_port;	/* Conntrack destination port */
-
 	/* Stats */
 	__u32 packet_count;
 	__u32 byte_count;

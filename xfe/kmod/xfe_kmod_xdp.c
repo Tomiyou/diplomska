@@ -68,6 +68,7 @@ int xfe_set_xdp_program(int user_fd) {
 int xfe_ipv4_create_rule(struct xfe_connection_create *sic) {
     printk("xfe_ipv4_create_rule called with params\n");
 
+    printk("New connection, MAC addresses %pM -> %pM\n", sic->xlate_src_mac, sic->xlate_dest_mac);
     return run_bpf(XFE_KMOD_INSERT, sic, sizeof(*sic), NULL);
 }
 

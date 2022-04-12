@@ -357,7 +357,7 @@ xfe_add_conn(struct xfe_connection *conn)
 }
 
 /* auto offload connection once we have this many packets*/
-static int offload_at_pkts = 128;
+static int offload_at_pkts = 8;
 
 /*
  * xfe_post_routing()
@@ -541,7 +541,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		sic.flags |= XFE_CREATE_FLAG_REMARK_PRIORITY;
 	}
 
-	DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+	printk("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
 		    sic.ip_proto, &sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port);
 
 	/*
@@ -555,17 +555,18 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		conn->hits++;
 
 		if (!conn->offloaded) {
+			printk("Not offloaded %d\n", conn->hits);
 			if (conn->offload_permit || conn->hits >= offload_at_pkts) {
-				DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
+				printk("OFFLOADING CONNECTION, TOO MANY HITS\n");
 
 				if (xfe_update_protocol(conn->sic, conn->ct) == 0) {
 					spin_unlock_bh(&xfe_connections_lock);
 					xfe_incr_exceptions(XFE_EXCEPTION_UPDATE_PROTOCOL_FAIL);
-					DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+					printk("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
 					return NF_ACCEPT;
 				}
 
-				DEBUG_TRACE("INFO: calling xfe rule creation!\n");
+				printk("INFO: calling xfe rule creation!\n");
 				spin_unlock_bh(&xfe_connections_lock);
 
 				ret = xfe_ipv4_create_rule(conn->sic);
@@ -582,7 +583,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 			xfe_ipv4_update_rule(conn->sic);
 		}
 
-		DEBUG_TRACE("FOUND, SKIPPING\n");
+		printk("FOUND, SKIPPING\n");
 		xfe_incr_exceptions(XFE_EXCEPTION_WAIT_FOR_ACCELERATION);
 		return NF_ACCEPT;
 	}
@@ -593,6 +594,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	dest_dev = skb->dev;
 	sic.dest_ifindex = dest_dev->ifindex;
 	sic.dest_mtu = dest_dev->mtu;
+	printk("Dest dev %s with ifindex %d\n", dest_dev->name, dest_dev->ifindex);
 	memcpy(sic.xlate_src_mac, dest_dev->dev_addr, ETH_ALEN);
 
 	/* Use xlate_dest_mac temporarily (will be overwritten) */
@@ -611,7 +613,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	}
 	dev_put(tmp_dev);
 
-	DEBUG_TRACE("Packet with tuple (%d) %pI4 -> %pI4 | %pI4 -> %pI4 (%pM -> %pM)\n",
+	printk("Packet with tuple (%d) %pI4 -> %pI4 | %pI4 -> %pI4 (%pM -> %pM)\n",
 		packet_is_reply, &sic.src_ip.ip, &sic.dest_ip.ip,
 		&sic.xlate_src_ip.ip, &sic.xlate_dest_ip.ip,
 		sic.xlate_src_mac, sic.xlate_dest_mac);
