@@ -264,17 +264,32 @@ int main(int argc, char **argv)
     }
     else if (strcmp(cmd, "attach") == 0)
     {
+        int i;
+        char cmd[512];
+
         /* Attach XDP to interface */
         if (argc < 3)
         {
-            printf("Attach command requires interface name as argument\n");
+            printf("Attach command requires at least 1 interface as argument\n");
             err = -1;
             goto exit;
         }
 
-        printf("Attaching accelerator to interface %s\n", argv[2]);
-        // TODO: attach_interface()
-        // fork() and run 'ip link ...'
+        for (i = 2; i < argc; i++) {
+            printf("Attaching accelerator to interface %s\n", argv[i]);
+
+            err = snprintf(cmd, 512, "ip link set dev %s xdp off && ip link set dev %s xdp pinned /sys/fs/bpf/xfe/xfe_ingress", argv[i], argv[i]);
+            if (err < 0) {
+                printf("Error formatting attach command\n");
+                goto exit;
+            }
+
+            err = system(cmd);
+            if (err) {
+                printf("Error attaching XDP program to %s\n", argv[i]);
+                goto exit;
+            }
+        }
     }
     else if (strcmp(cmd, "deinit") == 0)
     {
@@ -290,8 +305,24 @@ int main(int argc, char **argv)
             goto exit;
         }
 
+        /* Detach all XDP programs from interfaces */
+        err = system("ip a | tr : ' ' | grep xdp | awk '{ print $2 }' | while read iface; do ip link set dev \"$iface\" xdp off; done");
+        if (err)
+        {
+            printf("Error detaching XDP programs from all interfaces\n");
+            goto exit;
+        }
+        printf("Detached XDP programs from all interfaces\n");
+
         /* Close all pinned objects */
-        // TODO: call unlink/'rm' on flows map/progs
+        err = system("rm -rf /sys/fs/bpf/xfe/*");
+        if (err)
+        {
+            printf("Error removing files under /sys/fs/bpf/xfe/\n");
+            goto exit;
+        }
+
+        printf("Removed all files under /sys/fs/bpf/xfe/\n");
     }
     else
     {

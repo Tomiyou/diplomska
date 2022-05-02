@@ -183,7 +183,7 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 	if (flow == NULL) {
 		// bpf_printk("Lookup fail %x %x %x", ip_proto, src_ip, dest_ip);
 		// bpf_printk("            %x %x %x", src_port, dest_port, ingress_ifindex);
-		// bpf_printk("bpf_map_lookup_elem returned NULL for hash %x", hash);
+		bpf_printk("bpf_map_lookup_elem returned NULL for hash %x", hash);
 		return NULL;
 	}
 
@@ -260,7 +260,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 			goto out;
 		}
 
-		// bpf_printk("Flow lookup SUCCEEDEDs!");
+		bpf_printk("TCP flow lookup SUCCEEDEDs!");
 
 		/* Forward the packet */
 		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
@@ -295,7 +295,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 			goto out;
 		}
 
-		// bpf_printk("Flow lookup SUCCEEDED!");
+		bpf_printk("UDP flow lookup SUCCEEDED!");
 		// bpf_printk("Header values, IP: %x -> %x (DST PORT: %x) ",
 		// 	bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
 		// 	udp_hdr->dest);
@@ -354,7 +354,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 
 		memset(&flow, 0, sizeof(flow));
 
-		bpf_printk("Insertin rule\n");
+		bpf_printk("Insertin rule");
 		/* Flow hash is always 0 here so use it to lookup xfe_flow struct */
 		flow = bpf_map_lookup_elem(&heap, &always_zero);
 		if (flow == NULL) {
@@ -413,8 +413,8 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		flow_hash = get_flow_hash(create->ip_proto, create->src_ip.ip,
 					  create->dest_ip.ip, create->src_port,
 					  create->dest_port);
-		bpf_printk("L3 details %x %x %x", create->ip_proto, create->src_ip.ip, create->dest_ip.ip);
-		bpf_printk("L4 details %x %x", create->src_port, create->dest_port);
+		bpf_printk("netfilter_hook_fn: L3 details %u %pI4 %pI4", create->ip_proto, &create->src_ip.ip, &create->dest_ip.ip);
+		bpf_printk("netfilter_hook_fn: L4 details %u %u", create->src_port, create->dest_port);
 		bpf_printk("netfilter_hook_fn: create hash %x", flow_hash);
 		flow->hash = flow_hash;
 
@@ -424,6 +424,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 			/* TODO: handle hash collisions */
 			bpf_printk("bpf_map_update_elem failed, flow already exists");
 		}
+		bpf_printk("");
 
 		/* Update stats */
 		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
