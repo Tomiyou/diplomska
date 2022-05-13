@@ -367,6 +367,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 {
 	int ret;
 	struct xfe_connection_create sic;
+	struct xfe_connection_create sic_return;
 	struct xfe_connection_create *p_sic;
 	struct net_device *in;
 	struct nf_conn *ct;
@@ -377,6 +378,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 	struct nf_conntrack_tuple orig_tuple;
 	struct nf_conntrack_tuple reply_tuple;
 	struct xfe_connection *conn;
+	struct xfe_connection *conn_return;
 	struct iphdr *ip_header;
 	int packet_is_reply = false;
 	u32 dscp;
@@ -566,12 +568,50 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 					return NF_ACCEPT;
 				}
 
-				printk("INFO: calling xfe rule creation!\n");
+				if (sic.ip_proto != IPPROTO_TCP) {
+					printk("INFO: calling xfe rule creation!\n");
+					spin_unlock_bh(&xfe_connections_lock);
+
+					ret = xfe_ipv4_create_rule(conn->sic);
+					if ((ret == 0) || (ret == -EADDRINUSE)) {
+						conn->offloaded = 1;
+					}
+
+					return NF_ACCEPT;
+				}
+
+				/* Find opposite connection */
+				sic_return.ip_proto = sic.ip_proto;
+				if (packet_is_reply) {
+					sic_return.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+					sic_return.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
+					sic_return.src_port = orig_tuple.src.u.tcp.port;
+					sic_return.dest_port = orig_tuple.dst.u.tcp.port;
+				} else {
+					sic_return.src_ip.ip = (__be32)reply_tuple.src.u3.ip;
+					sic_return.dest_ip.ip = (__be32)reply_tuple.dst.u3.ip;
+					sic_return.src_port = reply_tuple.src.u.tcp.port;
+					sic_return.dest_port = reply_tuple.dst.u.tcp.port;
+				}
+				conn_return = xfe_find_conn(&sic_return.src_ip, &sic_return.dest_ip,
+							    sic_return.src_port, sic_return.dest_port,
+							    sic_return.ip_proto, is_v4);
 				spin_unlock_bh(&xfe_connections_lock);
+				if (!conn_return) {
+					printk("Unable to find opposite connection\n");
+					return NF_ACCEPT;
+				}
+
+				printk("INFO: calling xfe rule creation!\n");
 
 				ret = xfe_ipv4_create_rule(conn->sic);
 				if ((ret == 0) || (ret == -EADDRINUSE)) {
 					conn->offloaded = 1;
+				}
+
+				ret = xfe_ipv4_create_rule(conn_return->sic);
+				if ((ret == 0) || (ret == -EADDRINUSE)) {
+					conn_return->offloaded = 1;
 				}
 
 				return NF_ACCEPT;

@@ -241,6 +241,8 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	/* Move frame pointer */
 	frame_pointer += sizeof(*ip_hdr);
 
+	bpf_printk("Processing IPv4 packet with ID: %u", bpf_ntohs(ip_hdr->id));
+
 	if (ip_hdr->protocol == IPPROTO_TCP) {
 		struct tcphdr *tcp_hdr;
 
@@ -316,7 +318,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	}
 
 	ip_hdr->ttl--;
-	ip_hdr->tos = flow->xlate_dst_mac[5];
+	ip_hdr->tos = 0x7c;
 
 	// bpf_redirect_map(&tx_port, flow->xmit_ifindex, 0);
 	action = bpf_redirect(flow->xmit_ifindex, 0);
