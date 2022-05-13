@@ -291,6 +291,17 @@ int main(int argc, char **argv)
             }
         }
     }
+    else if (strcmp(cmd, "detach") == 0)
+    {
+        /* Detach all XDP programs from interfaces */
+        err = system("ip a | tr : ' ' | grep xdp | awk '{ print $2 }' | while read iface; do ip link set dev \"$iface\" xdp off; done");
+        if (err)
+        {
+            printf("Error detaching XDP programs from all interfaces\n");
+            goto exit;
+        }
+        printf("Detached XDP programs from all interfaces\n");
+    }
     else if (strcmp(cmd, "deinit") == 0)
     {
         /* De-init accelerator */
