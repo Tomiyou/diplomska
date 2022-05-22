@@ -220,7 +220,7 @@ struct xfe_connection {
 
 static int xfe_connections_size;
 
-static DEFINE_HASHTABLE(fc_conn_ht, HASH_SHIFT);
+static DEFINE_HASHTABLE(fc_conn_ht, XFE_HASH_SHIFT);
 
 static u32 fc_conn_hash(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
 			unsigned short sport, unsigned short dport, bool is_v4)

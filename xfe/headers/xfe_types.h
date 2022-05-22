@@ -1,11 +1,14 @@
+#ifndef XFE_TYPES_H
+#define XFE_TYPES_H
+
 #include <linux/if_ether.h>
 #include <linux/bpf.h>
 #include <stdbool.h>
 
 /* Map hash lookup */
-#define HASH_SHIFT 12
-#define HASH_SIZE (1 << HASH_SHIFT)
-#define HASH_MASK (HASH_SIZE - 1)
+#define XFE_HASH_SHIFT 12
+#define XFE_HASH_SIZE (1 << XFE_HASH_SHIFT)
+#define XFE_HASH_MASK (XFE_HASH_SIZE - 1)
 
 enum xfe_nl_msg_type {
 	XFE_MSG_PROG_FD
@@ -182,5 +185,7 @@ struct xfe_kmod_message {
 struct xfe_kmod_message_sync {
 	enum xfe_kmod_action action;
 	__u16 connection_count;
-	struct xfe_connection_sync sync[HASH_SIZE];
+	struct xfe_connection_sync sync[XFE_HASH_SIZE];
 };
+
+#endif /* XFE_TYPES_H */

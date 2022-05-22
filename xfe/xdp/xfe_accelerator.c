@@ -38,7 +38,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, __u32);
 	__type(value, struct xfe_flow);
-	__uint(max_entries, HASH_SIZE);
+	__uint(max_entries, XFE_HASH_SIZE);
 } xfe_flows SEC(".maps");
 
 struct xfe_instance {
@@ -161,7 +161,7 @@ __u32 get_flow_hash(__u8 ip_proto, __be32 src_ip,
 {
 	__u32 hash = bpf_ntohl(src_ip ^ dest_ip) ^ ip_proto ^ bpf_ntohs(src_port ^ dest_port);
 
-	return ((hash >> HASH_SHIFT) ^ hash) & HASH_MASK;
+	return ((hash >> XFE_HASH_SHIFT) ^ hash) & XFE_HASH_MASK;
 }
 
 static __always_inline
