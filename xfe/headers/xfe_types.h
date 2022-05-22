@@ -2,6 +2,11 @@
 #include <linux/bpf.h>
 #include <stdbool.h>
 
+/* Map hash lookup */
+#define HASH_SHIFT 12
+#define HASH_SIZE (1 << HASH_SHIFT)
+#define HASH_MASK (HASH_SIZE - 1)
+
 enum xfe_nl_msg_type {
 	XFE_MSG_PROG_FD
 };
@@ -133,34 +138,12 @@ struct xfe_connection_destroy {
  * 'src' is the creator of the connection.
  */
 struct xfe_connection_sync {
-	__u32 src_ifindex;
-	__u32 dest_ifindex;
-	int is_v6;			/* Is it for ipv6? */
-	int protocol;			/* IP protocol number (IPPROTO_...) */
-	xfe_ip_addr_t src_ip;		/* Non-NAT source address, i.e. the creator of the connection */
-	xfe_ip_addr_t src_ip_xlate;	/* NATed source address */
-	__be16 src_port;		/* Non-NAT source port */
-	__be16 src_port_xlate;		/* NATed source port */
-	xfe_ip_addr_t dest_ip;		/* Non-NAT destination address, i.e. to whom the connection was created */
-	xfe_ip_addr_t dest_ip_xlate;	/* NATed destination address */
-	__be16 dest_port;		/* Non-NAT destination port */
-	__be16 dest_port_xlate;		/* NATed destination port */
-	__u32 src_td_max_window;
-	__u32 src_td_end;
-	__u32 src_td_max_end;
-	__u64 src_packet_count;
-	__u64 src_byte_count;
-	__u32 src_new_packet_count;
-	__u32 src_new_byte_count;
-	__u32 dest_td_max_window;
-	__u32 dest_td_end;
-	__u32 dest_td_max_end;
-	__u64 dest_packet_count;
-	__u64 dest_byte_count;
-	__u32 dest_new_packet_count;
-	__u32 dest_new_byte_count;
-	__u32 reason;		/* reason for stats sync message, i.e. destroy, flush, period sync */
-	__u64 delta_jiffies;		/* Time to be added to the current timeout to keep the connection alive */
+	__u8 ip_proto;
+	xfe_ip_addr_t src_ip;
+	xfe_ip_addr_t dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
+	__u32 packets;
 };
 
 /*
@@ -192,8 +175,12 @@ struct xfe_kmod_message {
 	union {
 		struct xfe_connection_create create;
 		struct xfe_connection_destroy destroy;
-		struct xfe_connection_sync sync;
 		struct xfe_connection_mark mark;
 		__u32 ifindex;
 	};
+};
+struct xfe_kmod_message_sync {
+	enum xfe_kmod_action action;
+	__u16 connection_count;
+	struct xfe_connection_sync sync[HASH_SIZE];
 };

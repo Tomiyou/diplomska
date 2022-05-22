@@ -32,11 +32,6 @@
 # define memset(dest, chr, n)   __builtin_memset((dest), (chr), (n))
 #endif
 
-/* Map hash lookup */
-#define HASH_SHIFT 12
-#define HASH_SIZE (1 << HASH_SHIFT)
-#define HASH_MASK (HASH_SIZE - 1)
-
 /* This map stores all the accelerated XFE flows
  */
 struct {
@@ -201,7 +196,7 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 		return flow;
 	}
 
-	bpf_printk("Hash correct, but comparison wrong");
+	bpf_printk("Hash correct, but comparison wrong (collision...?)");
 	return NULL;
 }
 
@@ -278,6 +273,11 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		// bpf_printk("L3 %pI4 -> %pI4", &ip_hdr->saddr, &ip_hdr->daddr);
 		// bpf_printk("L3 %pI4 -> %pI4", &flow->xlate_src_ip, &flow->xlate_dest_ip);
 		// bpf_printk("L4 %x -> %x\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
+
+		/* If we have any TCP flag, send packet through slowpath */
+		if (unlikely(tcp_hdr->syn || tcp_hdr->rst || tcp_hdr->fin)) {
+			goto out;
+		}
 	} else if (ip_hdr->protocol == IPPROTO_UDP) {
 		struct udphdr *udp_hdr;
 

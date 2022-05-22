@@ -27,6 +27,10 @@
 
 static struct sock *nl_sock = NULL;
 
+/* Stat sync */
+static struct sk_buff *sync_skb = NULL;
+static struct xfe_kmod_message *sync_message;
+
 typedef enum xfe_exception {
 	XFE_EXCEPTION_PACKET_BROADCAST,
 	XFE_EXCEPTION_PACKET_MULTICAST,
@@ -216,8 +220,7 @@ struct xfe_connection {
 
 static int xfe_connections_size;
 
-#define FC_CONN_HASH_ORDER 13
-static DEFINE_HASHTABLE(fc_conn_ht, FC_CONN_HASH_ORDER);
+static DEFINE_HASHTABLE(fc_conn_ht, HASH_SHIFT);
 
 static u32 fc_conn_hash(xfe_ip_addr_t *saddr, xfe_ip_addr_t *daddr,
 			unsigned short sport, unsigned short dport, bool is_v4)
@@ -577,6 +580,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 						conn->offloaded = 1;
 					}
 
+					xfe_sync_all_rules();
 					return NF_ACCEPT;
 				}
 
@@ -913,6 +917,20 @@ static struct nf_ct_event_notifier xfe_conntrack_notifier = {
 static struct nf_hook_ops xfe_ops_post_routing[] __read_mostly = {
 	XFE_IPV4_NF_POST_ROUTING_HOOK(__xfe_ipv4_post_routing_hook),
 };
+
+static void xfe_sync_all_rules()
+{
+	__u32 count = 0;
+	struct xfe_connection *conn;
+	u32 i;
+
+	spin_lock_bh(&xfe_connections_lock);
+	xfe_hash_for_each(fc_conn_ht, i, node, conn, hl) {
+		count++;
+	}
+	spin_unlock_bh(&xfe_connections_lock);
+	printk("xfe_sync_all_rules: %u\n", count);
+}
 
 /*
  * xfe_sync_rule()
@@ -1266,6 +1284,13 @@ static int __init xfe_init(void)
 		goto exit3;
 	}
 
+	/*
+	 * Init BPF sync structures
+	 */
+    sync_skb = alloc_skb(struct xfe_kmod_message_sync, GFP_ATOMIC);
+    sync_message = skb_put(sync_skb, msg_len);
+    sync_message->action = XFE_KMOD_SYNC;
+
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	/*
 	 * Register a notifier hook to get fast notifications of expired connections.
@@ -1304,6 +1329,8 @@ exit5:
 exit4:
 #endif
 	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
+
+	kfree_skb(sync_skb);
 
 exit3:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
@@ -1354,6 +1381,8 @@ static void __exit xfe_exit(void)
 	 * Clean up BPF
 	 */
 	xfe_bpf_free();
+
+	kfree_skb(sync_skb);
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &xfe_conntrack_notifier);
