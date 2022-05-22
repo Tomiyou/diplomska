@@ -275,7 +275,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		// bpf_printk("L4 %x -> %x\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
 
 		/* If we have any TCP flag, send packet through slowpath */
-		if (unlikely(tcp_hdr->syn || tcp_hdr->rst || tcp_hdr->fin)) {
+		if (tcp_hdr->syn || tcp_hdr->rst || tcp_hdr->fin) {
 			goto out;
 		}
 	} else if (ip_hdr->protocol == IPPROTO_UDP) {
@@ -319,6 +319,14 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 
 	ip_hdr->ttl--;
 	ip_hdr->tos = 0x7c;
+
+	/* Increase packet counters */
+	bpf_spin_lock(&flow->lock);
+	flow->packet_count += 1;
+	flow->packet_count_tick += 1;
+	flow->byte_count += (ctx->data_end - ctx->data);
+	flow->byte_count_tick += (ctx->data_end - ctx->data);
+	bpf_spin_unlock(&flow->lock);
 
 	// bpf_redirect_map(&tx_port, flow->xmit_ifindex, 0);
 	action = bpf_redirect(flow->xmit_ifindex, 0);

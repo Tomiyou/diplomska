@@ -362,6 +362,8 @@ xfe_add_conn(struct xfe_connection *conn)
 /* auto offload connection once we have this many packets*/
 static int offload_at_pkts = 8;
 
+static void xfe_sync_all_rules(void);
+
 /*
  * xfe_post_routing()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
@@ -618,6 +620,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 					conn_return->offloaded = 1;
 				}
 
+				xfe_sync_all_rules();
 				return NF_ACCEPT;
 			}
 		}
@@ -918,7 +921,7 @@ static struct nf_hook_ops xfe_ops_post_routing[] __read_mostly = {
 	XFE_IPV4_NF_POST_ROUTING_HOOK(__xfe_ipv4_post_routing_hook),
 };
 
-static void xfe_sync_all_rules()
+static void xfe_sync_all_rules(void)
 {
 	__u32 count = 0;
 	struct xfe_connection *conn;
@@ -927,130 +930,132 @@ static void xfe_sync_all_rules()
 	spin_lock_bh(&xfe_connections_lock);
 	xfe_hash_for_each(fc_conn_ht, i, node, conn, hl) {
 		count++;
+		printk("xfe_sync_all_rules: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+		    conn->sic->ip_proto, &conn->sic->src_ip, &conn->sic->dest_ip, conn->sic->src_port, conn->sic->dest_port);
 	}
 	spin_unlock_bh(&xfe_connections_lock);
 	printk("xfe_sync_all_rules: %u\n", count);
 }
 
-/*
- * xfe_sync_rule()
- *	Synchronize a connection's state.
- */
-static void xfe_sync_rule(struct xfe_connection_sync *sis)
-{
-	struct nf_conntrack_tuple_hash *h;
-	struct nf_conntrack_tuple tuple;
-	struct nf_conn *ct;
-	XFE_NF_CONN_ACCT(acct);
+// /*
+//  * xfe_sync_rule()
+//  *	Synchronize a connection's state.
+//  */
+// static void xfe_sync_rule(struct xfe_connection_sync *sis)
+// {
+// 	struct nf_conntrack_tuple_hash *h;
+// 	struct nf_conntrack_tuple tuple;
+// 	struct nf_conn *ct;
+// 	XFE_NF_CONN_ACCT(acct);
 
-	/*
-	 * Create a tuple so as to be able to look up a connection
-	 */
-	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u.all = (__be16)sis->src_port;
-	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
-	tuple.dst.protonum = (u8)sis->protocol;
-	tuple.dst.u.all = (__be16)sis->dest_port;
+// 	/*
+// 	 * Create a tuple so as to be able to look up a connection
+// 	 */
+// 	memset(&tuple, 0, sizeof(tuple));
+// 	tuple.src.u.all = (__be16)sis->src_port;
+// 	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
+// 	tuple.dst.protonum = (u8)sis->protocol;
+// 	tuple.dst.u.all = (__be16)sis->dest_port;
 
-	tuple.src.u3.ip = sis->src_ip.ip;
-	tuple.dst.u3.ip = sis->dest_ip.ip;
-	tuple.src.l3num = AF_INET;
+// 	tuple.src.u3.ip = sis->src_ip.ip;
+// 	tuple.dst.u3.ip = sis->dest_ip.ip;
+// 	tuple.src.l3num = AF_INET;
 
-	DEBUG_TRACE("update connection - p: %d, s: %pI4:%u, d: %pI4:%u\n",
-		    (int)tuple.dst.protonum,
-		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
-		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
+// 	DEBUG_TRACE("update connection - p: %d, s: %pI4:%u, d: %pI4:%u\n",
+// 		    (int)tuple.dst.protonum,
+// 		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
+// 		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
 
-	/* Native bridge NOT supported (can't update statistics) */
-	/*
-	 * Update packet count for ingress on bridge device
-	 */
-	// if (skip_to_bridge_ingress) {
-	// 	struct rtnl_link_stats64 nlstats;
-	// 	nlstats.tx_packets = 0;
-	// 	nlstats.tx_bytes = 0;
+// 	/* Native bridge NOT supported (can't update statistics) */
+// 	/*
+// 	 * Update packet count for ingress on bridge device
+// 	 */
+// 	// if (skip_to_bridge_ingress) {
+// 	// 	struct rtnl_link_stats64 nlstats;
+// 	// 	nlstats.tx_packets = 0;
+// 	// 	nlstats.tx_bytes = 0;
 
-	// 	if (src_dev && IFF_EBRIDGE &&
-	// 	    (sis->src_new_packet_count || sis->src_new_byte_count)) {
-	// 		nlstats.rx_packets = sis->src_new_packet_count;
-	// 		nlstats.rx_bytes = sis->src_new_byte_count;
-	// 		spin_lock_bh(&xfe_connections_lock);
-	// 		br_dev_update_stats(src_dev, &nlstats);
-	// 		spin_unlock_bh(&xfe_connections_lock);
-	// 	}
-	// 	if (dest_dev && IFF_EBRIDGE &&
-	// 	    (sis->dest_new_packet_count || sis->dest_new_byte_count)) {
-	// 		nlstats.rx_packets = sis->dest_new_packet_count;
-	// 		nlstats.rx_bytes = sis->dest_new_byte_count;
-	// 		spin_lock_bh(&xfe_connections_lock);
-	// 		br_dev_update_stats(dest_dev, &nlstats);
-	// 		spin_unlock_bh(&xfe_connections_lock);
-	// 	}
-	// }
+// 	// 	if (src_dev && IFF_EBRIDGE &&
+// 	// 	    (sis->src_new_packet_count || sis->src_new_byte_count)) {
+// 	// 		nlstats.rx_packets = sis->src_new_packet_count;
+// 	// 		nlstats.rx_bytes = sis->src_new_byte_count;
+// 	// 		spin_lock_bh(&xfe_connections_lock);
+// 	// 		br_dev_update_stats(src_dev, &nlstats);
+// 	// 		spin_unlock_bh(&xfe_connections_lock);
+// 	// 	}
+// 	// 	if (dest_dev && IFF_EBRIDGE &&
+// 	// 	    (sis->dest_new_packet_count || sis->dest_new_byte_count)) {
+// 	// 		nlstats.rx_packets = sis->dest_new_packet_count;
+// 	// 		nlstats.rx_bytes = sis->dest_new_byte_count;
+// 	// 		spin_lock_bh(&xfe_connections_lock);
+// 	// 		br_dev_update_stats(dest_dev, &nlstats);
+// 	// 		spin_unlock_bh(&xfe_connections_lock);
+// 	// 	}
+// 	// }
 
-	/*
-	 * Look up conntrack connection
-	 */
-	h = nf_conntrack_find_get(&init_net, XFE_NF_CT_DEFAULT_ZONE, &tuple);
-	if (unlikely(!h)) {
-		DEBUG_TRACE("no connection found\n");
-		return;
-	}
+// 	/*
+// 	 * Look up conntrack connection
+// 	 */
+// 	h = nf_conntrack_find_get(&init_net, XFE_NF_CT_DEFAULT_ZONE, &tuple);
+// 	if (unlikely(!h)) {
+// 		DEBUG_TRACE("no connection found\n");
+// 		return;
+// 	}
 
-	ct = nf_ct_tuplehash_to_ctrack(h);
+// 	ct = nf_ct_tuplehash_to_ctrack(h);
 
-	/*
-	 * Only update if this is not a fixed timeout
-	 */
-	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
-		spin_lock_bh(&ct->lock);
-		/* TODO: handle timeout properly */
-		// ct->timeout.expires += sis->delta_jiffies;
-		WRITE_ONCE(ct->timeout, nfct_time_stamp + HZ * 2); // 2 OK?
-		spin_unlock_bh(&ct->lock);
-	}
+// 	/*
+// 	 * Only update if this is not a fixed timeout
+// 	 */
+// 	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
+// 		spin_lock_bh(&ct->lock);
+// 		/* TODO: handle timeout properly */
+// 		// ct->timeout.expires += sis->delta_jiffies;
+// 		WRITE_ONCE(ct->timeout, nfct_time_stamp + HZ * 2); // 2 OK?
+// 		spin_unlock_bh(&ct->lock);
+// 	}
 
-	acct = nf_conn_acct_find(ct);
-	if (acct) {
-		spin_lock_bh(&ct->lock);
-		atomic64_add(sis->src_new_packet_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].packets);
-		atomic64_add(sis->src_new_byte_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].bytes);
-		atomic64_add(sis->dest_new_packet_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].packets);
-		atomic64_add(sis->dest_new_byte_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].bytes);
-		spin_unlock_bh(&ct->lock);
-	}
+// 	acct = nf_conn_acct_find(ct);
+// 	if (acct) {
+// 		spin_lock_bh(&ct->lock);
+// 		atomic64_add(sis->src_new_packet_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].packets);
+// 		atomic64_add(sis->src_new_byte_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].bytes);
+// 		atomic64_add(sis->dest_new_packet_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].packets);
+// 		atomic64_add(sis->dest_new_byte_count, &XFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].bytes);
+// 		spin_unlock_bh(&ct->lock);
+// 	}
 
-	/* We don't care about this right now */
-	// switch (sis->protocol) {
-	// case IPPROTO_TCP:
-	// 	spin_lock_bh(&ct->lock);
-	// 	if (ct->proto.tcp.seen[0].td_maxwin < sis->src_td_max_window) {
-	// 		ct->proto.tcp.seen[0].td_maxwin = sis->src_td_max_window;
-	// 	}
-	// 	if ((s32)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
-	// 		ct->proto.tcp.seen[0].td_end = sis->src_td_end;
-	// 	}
-	// 	if ((s32)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
-	// 		ct->proto.tcp.seen[0].td_maxend = sis->src_td_max_end;
-	// 	}
-	// 	if (ct->proto.tcp.seen[1].td_maxwin < sis->dest_td_max_window) {
-	// 		ct->proto.tcp.seen[1].td_maxwin = sis->dest_td_max_window;
-	// 	}
-	// 	if ((s32)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
-	// 		ct->proto.tcp.seen[1].td_end = sis->dest_td_end;
-	// 	}
-	// 	if ((s32)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
-	// 		ct->proto.tcp.seen[1].td_maxend = sis->dest_td_max_end;
-	// 	}
-	// 	spin_unlock_bh(&ct->lock);
-	// 	break;
-	// }
+// 	/* We don't care about this right now */
+// 	// switch (sis->protocol) {
+// 	// case IPPROTO_TCP:
+// 	// 	spin_lock_bh(&ct->lock);
+// 	// 	if (ct->proto.tcp.seen[0].td_maxwin < sis->src_td_max_window) {
+// 	// 		ct->proto.tcp.seen[0].td_maxwin = sis->src_td_max_window;
+// 	// 	}
+// 	// 	if ((s32)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
+// 	// 		ct->proto.tcp.seen[0].td_end = sis->src_td_end;
+// 	// 	}
+// 	// 	if ((s32)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
+// 	// 		ct->proto.tcp.seen[0].td_maxend = sis->src_td_max_end;
+// 	// 	}
+// 	// 	if (ct->proto.tcp.seen[1].td_maxwin < sis->dest_td_max_window) {
+// 	// 		ct->proto.tcp.seen[1].td_maxwin = sis->dest_td_max_window;
+// 	// 	}
+// 	// 	if ((s32)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
+// 	// 		ct->proto.tcp.seen[1].td_end = sis->dest_td_end;
+// 	// 	}
+// 	// 	if ((s32)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
+// 	// 		ct->proto.tcp.seen[1].td_maxend = sis->dest_td_max_end;
+// 	// 	}
+// 	// 	spin_unlock_bh(&ct->lock);
+// 	// 	break;
+// 	// }
 
-	/*
-	 * Release connection
-	 */
-	nf_ct_put(ct);
-}
+// 	/*
+// 	 * Release connection
+// 	 */
+// 	nf_ct_put(ct);
+// }
 
 /*
  * xfe_device_event()
@@ -1222,6 +1227,7 @@ static int __init xfe_init(void)
         .input = xfe_netlink_recv_msg,
     };
 	int result = -1;
+	long unsigned int msg_len = sizeof(*sync_message);
 
 	printk(KERN_ALERT "xfe: starting up\n");
 	DEBUG_INFO("XFE CM init\n");
@@ -1287,7 +1293,7 @@ static int __init xfe_init(void)
 	/*
 	 * Init BPF sync structures
 	 */
-    sync_skb = alloc_skb(struct xfe_kmod_message_sync, GFP_ATOMIC);
+    sync_skb = alloc_skb(msg_len, GFP_ATOMIC);
     sync_message = skb_put(sync_skb, msg_len);
     sync_message->action = XFE_KMOD_SYNC;
 

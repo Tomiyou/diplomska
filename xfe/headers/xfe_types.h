@@ -67,7 +67,9 @@ struct xfe_flow {
 
 	/* Stats */
 	__u32 packet_count;
+	__u32 packet_count_tick;
 	__u32 byte_count;
+	__u32 byte_count_tick;
 
 	/* QoS information */
 	__u8 tos;

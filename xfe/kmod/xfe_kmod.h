@@ -125,7 +125,7 @@ void xfe_ipv4_destroy_rule(struct xfe_connection_destroy *sid);
 void xfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
 void xfe_ipv4_update_rule(struct xfe_connection_create *sic);
 void xfe_ipv4_mark_rule(struct xfe_connection_mark *mark);
-int xfe_ipv4_sync_rules(struct xfe_connection_sync *syncs, int count, struct sk_buff **ret);
+int xfe_ipv4_sync_rules(struct sk_buff *skb);
 
 /*
  * xfe_ipv4_addr_equal()
