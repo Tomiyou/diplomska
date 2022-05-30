@@ -134,6 +134,7 @@ struct xfe_connection_destroy {
 	xfe_ip_addr_t dest_ip;
 	__be16 src_port;
 	__be16 dest_port;
+	__u32 packets;
 };
 
 /*

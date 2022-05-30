@@ -19,6 +19,7 @@
 #include <linux/hashtable.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
+#include <linux/workqueue.h>
 
 #include "xfe_types.h"
 #include "xfe_kmod.h"
@@ -29,7 +30,11 @@ static struct sock *nl_sock = NULL;
 
 /* Stat sync */
 static struct sk_buff *sync_skb = NULL;
-static struct xfe_kmod_message *sync_message;
+static struct xfe_kmod_message_sync *sync_message;
+
+/* Timer */
+static struct delayed_work sync_dwork;
+static unsigned int work_cpu;
 
 typedef enum xfe_exception {
 	XFE_EXCEPTION_PACKET_BROADCAST,
@@ -362,8 +367,6 @@ xfe_add_conn(struct xfe_connection *conn)
 /* auto offload connection once we have this many packets*/
 static int offload_at_pkts = 8;
 
-static void xfe_sync_all_rules(void);
-
 /*
  * xfe_post_routing()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
@@ -582,7 +585,6 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 						conn->offloaded = 1;
 					}
 
-					xfe_sync_all_rules();
 					return NF_ACCEPT;
 				}
 
@@ -620,7 +622,6 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 					conn_return->offloaded = 1;
 				}
 
-				xfe_sync_all_rules();
 				return NF_ACCEPT;
 			}
 		}
@@ -921,7 +922,7 @@ static struct nf_hook_ops xfe_ops_post_routing[] __read_mostly = {
 	XFE_IPV4_NF_POST_ROUTING_HOOK(__xfe_ipv4_post_routing_hook),
 };
 
-static void xfe_sync_all_rules(void)
+static void xfe_sync_all_rules(struct work_struct *work)
 {
 	__u32 count = 0;
 	struct xfe_connection *conn;
@@ -929,12 +930,28 @@ static void xfe_sync_all_rules(void)
 
 	spin_lock_bh(&xfe_connections_lock);
 	xfe_hash_for_each(fc_conn_ht, i, node, conn, hl) {
+		struct xfe_connection_sync *sync = &sync_message->sync[i];
+		struct xfe_connection_create *conn_info = conn->sic;
+
+		DEBUG_TRACE("xfe_sync_all_rules: updating connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+		    conn_info->ip_proto, &conn_info->src_ip, &conn_info->dest_ip, conn_info->src_port, conn_info->dest_port);
+		sync->ip_proto = conn_info->ip_proto;
+		sync->src_ip = conn_info->src_ip;
+		sync->dest_ip = conn_info->dest_ip;
+		sync->src_port = conn_info->src_port;
+		sync->dest_port = conn_info->dest_port;
 		count++;
-		printk("xfe_sync_all_rules: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-		    conn->sic->ip_proto, &conn->sic->src_ip, &conn->sic->dest_ip, conn->sic->src_port, conn->sic->dest_port);
 	}
+	sync_message->connection_count = count;
 	spin_unlock_bh(&xfe_connections_lock);
+
+	if (likely(sync_skb)) {
+		printk("Syncing XDP\n");
+		xfe_ipv4_sync_rules(sync_skb);
+	}
 	printk("xfe_sync_all_rules: %u\n", count);
+
+	schedule_delayed_work_on(work_cpu, (struct delayed_work *)work, HZ);
 }
 
 // /*
@@ -1297,6 +1314,13 @@ static int __init xfe_init(void)
     sync_message = skb_put(sync_skb, msg_len);
     sync_message->action = XFE_KMOD_SYNC;
 
+	/*
+	 * Init periodic timer
+	 */
+	work_cpu = WORK_CPU_UNBOUND;
+	INIT_DELAYED_WORK(&sync_dwork, xfe_sync_all_rules);
+	schedule_delayed_work_on(work_cpu, &sync_dwork, HZ);
+
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	/*
 	 * Register a notifier hook to get fast notifications of expired connections.
@@ -1366,7 +1390,7 @@ static void __exit xfe_exit(void)
 	/*
 	 * Unregister our sync callback.
 	 */
-	/* TODO .... */
+	cancel_delayed_work_sync(&sync_dwork);
 
 	/*
 	 * Wait for all callbacks to complete.

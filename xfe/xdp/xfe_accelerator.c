@@ -346,7 +346,9 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 
 	/* Instructions on what to do */
 	struct xfe_kmod_message *msg;
+	struct xfe_kmod_message_sync *sync;
 	unsigned int msg_size = sizeof(*msg);
+	unsigned int sync_size = sizeof(*sync);
 
 	/* Byte-count bounds check; check if msg + size of header
 	 * is after data_end. */
@@ -476,6 +478,14 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		bpf_spin_unlock(&xfe->lock);
 		return err;
 	} else if (msg->action == XFE_KMOD_UPDATE) {
+	} else if (msg->action == XFE_KMOD_SYNC) {
+		if (data + sync_size > data_end) {
+			bpf_printk("netfilter_hook_fn: data bound check failed!");
+			return -1;
+		}
+
+		sync = (struct xfe_kmod_message_sync *) data;
+		bpf_printk("Received SYNC message %u\n", sync->connection_count);
 	} else {
 		bpf_printk("netfilter_hook_fn: unknown action received %u", msg->action);
 	}
