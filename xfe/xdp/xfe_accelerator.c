@@ -346,9 +346,9 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 
 	/* Instructions on what to do */
 	struct xfe_kmod_message *msg;
-	struct xfe_kmod_message_sync *sync;
+	struct xfe_kmod_message_sync *sync_msg;
 	unsigned int msg_size = sizeof(*msg);
-	unsigned int sync_size = sizeof(*sync);
+	unsigned int sync_size = sizeof(*sync_msg);
 
 	/* Byte-count bounds check; check if msg + size of header
 	 * is after data_end. */
@@ -479,13 +479,43 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		return err;
 	} else if (msg->action == XFE_KMOD_UPDATE) {
 	} else if (msg->action == XFE_KMOD_SYNC) {
+		struct xfe_connection_sync *sync;
+		struct xfe_flow *flow;
+		int i;
+
 		if (data + sync_size > data_end) {
 			bpf_printk("netfilter_hook_fn: data bound check failed!");
 			return -1;
 		}
 
-		sync = (struct xfe_kmod_message_sync *) data;
-		bpf_printk("Received SYNC message %u\n", sync->connection_count);
+		sync_msg = (struct xfe_kmod_message_sync *) data;
+
+		bpf_printk("Connection SYNC called: %u\n", sync_msg->connection_count);
+
+		/* Get counters for each flow entry */
+		for (i = 0; i < 1024; i++) {
+			if (i < sync_msg->connection_count) {
+				break;
+			}
+
+			sync = &sync_msg->sync[i];
+			flow = lookup_flow(sync->ip_proto, sync->src_ip.ip, sync->dest_ip.ip,
+					sync->src_port, sync->dest_port, sync->ifindex);
+			if (!flow) {
+				continue;
+			}
+
+			bpf_printk("Syncing connection: %u %u %u\n", bpf_ntohs(sync->src_port), bpf_ntohs(sync->dest_port), flow->packet_count_tick);
+
+			/* Copy and reset counters */
+			bpf_spin_lock(&flow->lock);
+			sync->packets = flow->packet_count_tick;
+			sync->bytes = flow->byte_count_tick;
+			flow->packet_count_tick = 0;
+			flow->byte_count_tick = 0;
+			bpf_spin_unlock(&flow->lock);
+		}
+
 	} else {
 		bpf_printk("netfilter_hook_fn: unknown action received %u", msg->action);
 	}

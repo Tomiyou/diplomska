@@ -68,8 +68,8 @@ struct xfe_flow {
 	/* Stats */
 	__u32 packet_count;
 	__u32 packet_count_tick;
-	__u32 byte_count;
-	__u32 byte_count_tick;
+	__u64 byte_count;
+	__u64 byte_count_tick;
 
 	/* QoS information */
 	__u8 tos;
@@ -149,7 +149,9 @@ struct xfe_connection_sync {
 	xfe_ip_addr_t dest_ip;
 	__be16 src_port;
 	__be16 dest_port;
+	__u32 ifindex;
 	__u32 packets;
+	__u64 bytes;
 };
 
 /*
@@ -187,8 +189,8 @@ struct xfe_kmod_message {
 };
 struct xfe_kmod_message_sync {
 	enum xfe_kmod_action action;
+	struct xfe_connection_sync sync[1024];
 	__u16 connection_count;
-	struct xfe_connection_sync sync[XFE_HASH_SIZE];
 };
 
 #endif /* XFE_TYPES_H */

@@ -933,23 +933,29 @@ static void xfe_sync_all_rules(struct work_struct *work)
 		struct xfe_connection_sync *sync = &sync_message->sync[i];
 		struct xfe_connection_create *conn_info = conn->sic;
 
-		DEBUG_TRACE("xfe_sync_all_rules: updating connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+		printk("xfe_sync_all_rules: updating connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
 		    conn_info->ip_proto, &conn_info->src_ip, &conn_info->dest_ip, conn_info->src_port, conn_info->dest_port);
 		sync->ip_proto = conn_info->ip_proto;
 		sync->src_ip = conn_info->src_ip;
 		sync->dest_ip = conn_info->dest_ip;
 		sync->src_port = conn_info->src_port;
 		sync->dest_port = conn_info->dest_port;
+		sync->ifindex = conn_info->src_ifindex;
 		count++;
 	}
 	sync_message->connection_count = count;
 	spin_unlock_bh(&xfe_connections_lock);
 
-	if (likely(sync_skb)) {
-		printk("Syncing XDP\n");
-		xfe_ipv4_sync_rules(sync_skb);
+	if (unlikely(!sync_skb || count == 0)) {
+		return;
 	}
-	printk("xfe_sync_all_rules: %u\n", count);
+
+	xfe_ipv4_sync_rules(sync_skb);
+
+	for (i = 0; i < count; i++) {
+		struct xfe_connection_sync *sync = &sync_message->sync[i];
+		printk("xfe_sync_all_rules: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
+	}
 
 	schedule_delayed_work_on(work_cpu, (struct delayed_work *)work, HZ);
 }
