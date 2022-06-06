@@ -930,7 +930,7 @@ static void xfe_sync_all_rules(struct work_struct *work)
 
 	spin_lock_bh(&xfe_connections_lock);
 	xfe_hash_for_each(fc_conn_ht, i, node, conn, hl) {
-		struct xfe_connection_sync *sync = &sync_message->sync[i];
+		struct xfe_connection_sync *sync = &sync_message->sync[count];
 		struct xfe_connection_create *conn_info = conn->sic;
 
 		printk("xfe_sync_all_rules: updating connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
@@ -947,7 +947,7 @@ static void xfe_sync_all_rules(struct work_struct *work)
 	spin_unlock_bh(&xfe_connections_lock);
 
 	if (unlikely(!sync_skb || count == 0)) {
-		return;
+		goto skip_sync;
 	}
 
 	xfe_ipv4_sync_rules(sync_skb);
@@ -957,6 +957,7 @@ static void xfe_sync_all_rules(struct work_struct *work)
 		printk("xfe_sync_all_rules: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
 	}
 
+skip_sync:
 	schedule_delayed_work_on(work_cpu, (struct delayed_work *)work, HZ);
 }
 

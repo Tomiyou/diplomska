@@ -236,7 +236,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	/* Move frame pointer */
 	frame_pointer += sizeof(*ip_hdr);
 
-	bpf_printk("Processing IPv4 packet with ID: %u", bpf_ntohs(ip_hdr->id));
+	// bpf_printk("Processing IPv4 packet with ID: %u", bpf_ntohs(ip_hdr->id));
 
 	if (ip_hdr->protocol == IPPROTO_TCP) {
 		struct tcphdr *tcp_hdr;
@@ -257,7 +257,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 			goto out;
 		}
 
-		bpf_printk("TCP flow lookup SUCCEEDEDs!");
+		// bpf_printk("TCP flow lookup SUCCEEDEDs!");
 
 		/* Forward the packet */
 		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
@@ -494,7 +494,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 
 		/* Get counters for each flow entry */
 		for (i = 0; i < 1024; i++) {
-			if (i < sync_msg->connection_count) {
+			if (i >= sync_msg->connection_count) {
 				break;
 			}
 
