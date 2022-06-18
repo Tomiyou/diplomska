@@ -364,6 +364,60 @@ xfe_add_conn(struct xfe_connection *conn)
 	return conn;
 }
 
+static bool xfe_sync_conn(struct xfe_connection_sync *sync)
+{
+	struct nf_conntrack_tuple_hash *h;
+	struct nf_conntrack_tuple tuple;
+	struct nf_conn *ct;
+
+	printk("xfe_sync_all_rules: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
+
+	/*
+	 * Create a tuple so as to be able to look up a conntrack connection
+	 */
+	memset(&tuple, 0, sizeof(tuple));
+	tuple.src.l3num = AF_INET;
+	tuple.dst.protonum = (uint8_t)sync->ip_proto;
+	tuple.src.u3.ip = sync->src_ip.ip;
+	tuple.src.u.all = sync->src_port;
+	tuple.dst.u3.ip = sync->dest_ip.ip;
+	tuple.dst.u.all = sync->dest_port;
+	tuple.dst.dir = IP_CT_DIR_MAX;
+
+	printk("Conntrack lookup for %pI4 -> %pI4, %d %d\n", &sync->src_ip.ip, &sync->dest_ip.ip, ntohs(sync->src_port), ntohs(sync->dest_port));
+ 
+	/*
+	 * Look up conntrack connection
+	 */
+	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
+	if (!h) {
+		// DEBUG_WARN("%px: NSS Sync: no conntrack connection\n", sync);
+		return false;
+	}
+
+	printk("Found conntrack entry\n");
+
+	ct = nf_ct_tuplehash_to_ctrack(h);
+
+	/*
+	 * Only update if this is not a fixed timeout
+	 * delta_jiffies is the elapsed time since the last sync of this connection.
+	 */
+	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
+		spin_lock_bh(&ct->lock);
+		ct->timeout += 1 * HZ;
+		spin_unlock_bh(&ct->lock);
+	}
+
+	nf_ct_acct_add(ct, h->tuple.dst.dir, sync->packets, sync->bytes);
+
+	/*
+	 * Release connection
+	 */
+	nf_ct_put(ct);
+	return true;
+}
+
 /* auto offload connection once we have this many packets*/
 static int offload_at_pkts = 8;
 
@@ -954,7 +1008,7 @@ static void xfe_sync_all_rules(struct work_struct *work)
 
 	for (i = 0; i < count; i++) {
 		struct xfe_connection_sync *sync = &sync_message->sync[i];
-		printk("xfe_sync_all_rules: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
+		xfe_sync_conn(sync);
 	}
 
 skip_sync:
