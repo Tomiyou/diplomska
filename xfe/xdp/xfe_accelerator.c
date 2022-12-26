@@ -17,6 +17,7 @@
 
 #include "xfe_types.h"
 
+/* Debug logging */
 #undef bpf_printk
 #define bpf_printk(fmt, ...)                            \
 ({                                                      \
@@ -25,6 +26,45 @@
 			 ##__VA_ARGS__);                \
 })
 
+/*
+ * The following are debug macros used throughout the XFE.
+ *
+ * The DEBUG_LEVEL enables the followings based on its value,
+ * when dynamic debug option is disabled.
+ *
+ * 0 = OFF
+ * 1 = ERRORS
+ * 2 = 1 + WARN
+ * 3 = 2 + INFO
+ * 4 = 3 + TRACE
+ */
+#define DEBUG_LEVEL 4
+
+#if (DEBUG_LEVEL < 1)
+	#define DEBUG_ERROR(...)
+#else
+	#define DEBUG_ERROR(...) bpf_printk(__VA_ARGS__)
+#endif
+
+#if (DEBUG_LEVEL < 2)
+	#define DEBUG_WARN(...)
+#else
+	#define DEBUG_WARN(...) bpf_printk(__VA_ARGS__)
+#endif
+
+#if (DEBUG_LEVEL < 3)
+	#define DEBUG_INFO(...)
+#else
+	#define DEBUG_INFO(...) bpf_printk(__VA_ARGS__)
+#endif
+
+#if (DEBUG_LEVEL < 4)
+	#define DEBUG_TRACE(...)
+#else
+	#define DEBUG_TRACE(...) bpf_printk(__VA_ARGS__)
+#endif
+
+/* memcpy() and memset() for eBPF */
 #ifndef memcpy
 # define memcpy(dest, src, n)   __builtin_memcpy((dest), (src), (n))
 #endif
@@ -186,7 +226,7 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 		return flow;
 	}
 
-	// bpf_printk("Hash correct, but comparison wrong (collision...?)");
+	DEBUG_WARN("Hash correct, but comparison wrong (collision...?)");
 	return NULL;
 }
 
@@ -226,7 +266,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	/* Move frame pointer */
 	frame_pointer += sizeof(*ip_hdr);
 
-	// bpf_printk("Processing IPv4 packet with ID: %u", bpf_ntohs(ip_hdr->id));
+	DEBUG_TRACE("Processing IPv4 packet with ID: %u", bpf_ntohs(ip_hdr->id));
 
 	if (ip_hdr->protocol == IPPROTO_TCP) {
 		struct tcphdr *tcp_hdr;
@@ -247,7 +287,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 			goto out;
 		}
 
-		// bpf_printk("TCP flow lookup SUCCEEDEDs!");
+		DEBUG_TRACE("TCP flow lookup SUCCEEDEDs!");
 
 		/* Forward the packet */
 		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
@@ -256,13 +296,13 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		ip_hdr->daddr = flow->xlate_dest_ip;
 		tcp_hdr->source = flow->xlate_src_port;
 		tcp_hdr->dest = flow->xlate_dest_port;
-		// bpf_printk("L2 %x:%x:%x", flow->xlate_src_mac[0], flow->xlate_src_mac[1], flow->xlate_src_mac[2]);
-		// bpf_printk("   %x:%x:%x", flow->xlate_src_mac[3], flow->xlate_src_mac[4], flow->xlate_src_mac[5]);
-		// bpf_printk("L2 %x:%x:%x", flow->xlate_dst_mac[0], flow->xlate_dst_mac[1], flow->xlate_dst_mac[2]);
-		// bpf_printk("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
-		// bpf_printk("L3 %pI4 -> %pI4", &ip_hdr->saddr, &ip_hdr->daddr);
-		// bpf_printk("L3 %pI4 -> %pI4", &flow->xlate_src_ip, &flow->xlate_dest_ip);
-		// bpf_printk("L4 %x -> %x\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
+		DEBUG_TRACE("L2 %x:%x:%x", flow->xlate_src_mac[0], flow->xlate_src_mac[1], flow->xlate_src_mac[2]);
+		DEBUG_TRACE("   %x:%x:%x", flow->xlate_src_mac[3], flow->xlate_src_mac[4], flow->xlate_src_mac[5]);
+		DEBUG_TRACE("L2 %x:%x:%x", flow->xlate_dst_mac[0], flow->xlate_dst_mac[1], flow->xlate_dst_mac[2]);
+		DEBUG_TRACE("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
+		DEBUG_TRACE("L3 %pI4 -> %pI4", &ip_hdr->saddr, &ip_hdr->daddr);
+		DEBUG_TRACE("L3 %pI4 -> %pI4", &flow->xlate_src_ip, &flow->xlate_dest_ip);
+		DEBUG_TRACE("L4 %x -> %x\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
 
 		/* If we have any TCP flag, send packet through slowpath */
 		if (tcp_hdr->syn || tcp_hdr->rst || tcp_hdr->fin) {
@@ -287,14 +327,14 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 			goto out;
 		}
 
-		// bpf_printk("UDP flow lookup SUCCEEDED!");
-		// bpf_printk("Header values, IP: %x -> %x (DST PORT: %x) ",
-		// 	bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
-		// 	udp_hdr->dest);
-		// bpf_printk("%u, %x, %x",
-		// 	ctx->ingress_ifindex,
-		// 	bpf_ntohs(eth_hdr->h_proto),
-		// 	ip_hdr->protocol);
+		DEBUG_TRACE("UDP flow lookup SUCCEEDED!");
+		DEBUG_TRACE("Header values, IP: %x -> %x (DST PORT: %x) ",
+			bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
+			udp_hdr->dest);
+		DEBUG_TRACE("%u, %x, %x",
+			ctx->ingress_ifindex,
+			bpf_ntohs(eth_hdr->h_proto),
+			ip_hdr->protocol);
 
 		/* Forward the packet */
 		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
@@ -320,7 +360,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 
 	// bpf_redirect_map(&tx_port, flow->xmit_ifindex, 0);
 	action = bpf_redirect(flow->xmit_ifindex, 0);
-	// bpf_printk("Redirect did not go through %d %ld\n", flow->xmit_ifindex, action);
+	DEBUG_ERROR("Redirect did not go through %d %ld\n", flow->xmit_ifindex, action);
 
 out:
 	return action;
@@ -343,7 +383,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 	/* Byte-count bounds check; check if msg + size of header
 	 * is after data_end. */
 	if (data + msg_size > data_end) {
-		bpf_printk("netfilter_hook_fn: data bound check failed!");
+		DEBUG_ERROR("netfilter_hook_fn: data bound check failed!");
 		return -1;
 	}
 
@@ -356,11 +396,11 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 
 		memset(&flow, 0, sizeof(flow));
 
-		bpf_printk("Inserting rule");
+		DEBUG_INFO("Inserting rule");
 		/* Flow hash is always 0 here so use it to lookup xfe_flow struct */
 		flow = bpf_map_lookup_elem(&heap, &always_zero);
 		if (flow == NULL) {
-			bpf_printk("Error getting stack bypass struct");
+			DEBUG_ERROR("Error getting stack bypass struct");
 			return -1;
 		}
 
@@ -383,10 +423,10 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		flow->xlate_dest_ip = create->xlate_dest_ip.ip;
 		flow->xlate_src_port = create->xlate_src_port;
 		flow->xlate_dest_port = create->xlate_dest_port;
-		bpf_printk("B2 %x:%x:%x", flow->xlate_src_mac[0], flow->xlate_src_mac[1], flow->xlate_src_mac[2]);
-		bpf_printk("   %x:%x:%x", flow->xlate_src_mac[3], flow->xlate_src_mac[4], flow->xlate_src_mac[5]);
-		bpf_printk("B2 %x:%x:%x", flow->xlate_dst_mac[0], flow->xlate_dst_mac[1], flow->xlate_dst_mac[2]);
-		bpf_printk("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
+		DEBUG_INFO("B2 %x:%x:%x", flow->xlate_src_mac[0], flow->xlate_src_mac[1], flow->xlate_src_mac[2]);
+		DEBUG_INFO("   %x:%x:%x", flow->xlate_src_mac[3], flow->xlate_src_mac[4], flow->xlate_src_mac[5]);
+		DEBUG_INFO("B2 %x:%x:%x", flow->xlate_dst_mac[0], flow->xlate_dst_mac[1], flow->xlate_dst_mac[2]);
+		DEBUG_INFO("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
 
 		/* Stats */
 		flow->packet_count = 0;
@@ -415,18 +455,18 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		flow_hash = get_flow_hash(create->ip_proto, create->src_ip.ip,
 					  create->dest_ip.ip, create->src_port,
 					  create->dest_port);
-		bpf_printk("netfilter_hook_fn: L3 details %u %pI4 %pI4", create->ip_proto, &create->src_ip.ip, &create->dest_ip.ip);
-		bpf_printk("netfilter_hook_fn: L4 details %u %u", create->src_port, create->dest_port);
-		bpf_printk("netfilter_hook_fn: create hash %x", flow_hash);
+		DEBUG_INFO("netfilter_hook_fn: L3 details %u %pI4 %pI4", create->ip_proto, &create->src_ip.ip, &create->dest_ip.ip);
+		DEBUG_INFO("netfilter_hook_fn: L4 details %u %u", create->src_port, create->dest_port);
+		DEBUG_INFO("netfilter_hook_fn: create hash %x", flow_hash);
 		flow->hash = flow_hash;
 
 		/* Insert flow into hash table */
 		err = bpf_map_update_elem(&xfe_flows, &flow_hash, flow, BPF_NOEXIST);
 		if (err) {
 			/* TODO: handle hash collisions */
-			bpf_printk("bpf_map_update_elem failed, flow already exists");
+			DEBUG_WARN("bpf_map_update_elem failed, flow already exists");
 		}
-		bpf_printk("");
+		DEBUG_INFO("");
 
 		/* Update stats */
 		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
@@ -449,7 +489,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		flow_hash = get_flow_hash(destroy->ip_proto, destroy->src_ip.ip,
 					  destroy->dest_ip.ip, destroy->src_port,
 					  destroy->dest_port);
-		bpf_printk("netfilter_hook_fn: destroy hash %x", flow_hash);
+		DEBUG_INFO("netfilter_hook_fn: destroy hash %x", flow_hash);
 
 		/* Remove flow from hash table */
 		err = bpf_map_delete_elem(&xfe_flows, &flow_hash);
@@ -474,13 +514,13 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		int i;
 
 		if (data + sync_size > data_end) {
-			bpf_printk("netfilter_hook_fn: data bound check failed!");
+			DEBUG_ERROR("netfilter_hook_fn: data bound check failed!");
 			return -1;
 		}
 
 		sync_msg = (struct xfe_kmod_message_sync *) data;
 
-		bpf_printk("Connection SYNC called: %u\n", sync_msg->connection_count);
+		DEBUG_INFO("Connection SYNC called: %u\n", sync_msg->connection_count);
 
 		/* Get counters for each flow entry */
 		for (i = 0; i < 1024; i++) {
@@ -495,7 +535,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 				continue;
 			}
 
-			bpf_printk("Syncing connection: %u %u %u\n", bpf_ntohs(sync->src_port), bpf_ntohs(sync->dest_port), flow->packet_count_tick);
+			DEBUG_INFO("Syncing connection: %u %u %u\n", bpf_ntohs(sync->src_port), bpf_ntohs(sync->dest_port), flow->packet_count_tick);
 
 			/* Copy and reset counters */
 			bpf_spin_lock(&flow->lock);
@@ -507,7 +547,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		}
 
 	} else {
-		bpf_printk("netfilter_hook_fn: unknown action received %u", msg->action);
+		DEBUG_ERROR("netfilter_hook_fn: unknown action received %u", msg->action);
 	}
 
 	return 0;
