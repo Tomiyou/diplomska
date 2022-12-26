@@ -2,7 +2,7 @@ LLC ?= llc
 CLANG ?= clang
 CC ?= gcc
 
-BPF_CFLAGS ?= -I../headers/ -I ../../linux/tools/lib/
+BPF_CFLAGS ?= -I../headers/ -I../../linux/tools/lib/
 
 all:
 	$(CLANG) -S \

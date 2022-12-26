@@ -8,6 +8,7 @@
 #include <linux/filter.h>
 #include <linux/types.h>
 #include <errno.h>
+#include <stdbool.h>
 
 /* BPF stuff */
 #include <linux/bpf.h>
@@ -71,19 +72,12 @@ struct {
  * This is how we get around the 512 byte stack limit
  * For some reason, this does not work with BTF, so we use "normal" BPF
  */
-struct bpf_map_def SEC("maps") heap = {
-	.type = BPF_MAP_TYPE_PERCPU_ARRAY,
-	.key_size = sizeof(__u32),
-	.value_size = sizeof(struct xfe_flow),
-	.max_entries = 1,
-};
-
-// struct bpf_map_def SEC("maps") tx_port = {
-// 	.type = BPF_MAP_TYPE_DEVMAP,
-// 	.key_size = sizeof(int),
-// 	.value_size = sizeof(int),
-// 	.max_entries = 256,
-// };
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(key_size, sizeof(__u32));
+    __uint(value_size, sizeof(struct xfe_flow));
+    __uint(max_entries, 1);
+} heap SEC(".maps");
 
 static const __u32 always_zero = 0;
 
@@ -176,9 +170,6 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 	/* First check if we can actually find the flow in the hashmap */
 	flow = bpf_map_lookup_elem(&xfe_flows, &hash);
 	if (flow == NULL) {
-		// bpf_printk("Lookup fail %x %x %x", ip_proto, src_ip, dest_ip);
-		// bpf_printk("            %x %x %x", src_port, dest_port, ingress_ifindex);
-		bpf_printk("bpf_map_lookup_elem returned NULL for hash %x", hash);
 		return NULL;
 	}
 
@@ -186,8 +177,7 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 	 * having different interfaces or different destination MACs.
 	 * Therefore it is pointless to compare those two things
 	 */
-	if (flow->ifindex == ingress_ifindex &&
-	    flow->ip_proto == ip_proto &&
+	if (flow->ip_proto == ip_proto &&
 	    flow->src_ip == src_ip &&
 	    flow->dest_ip == dest_ip &&
 	    flow->src_port == src_port &&
@@ -196,7 +186,7 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 		return flow;
 	}
 
-	bpf_printk("Hash correct, but comparison wrong (collision...?)");
+	// bpf_printk("Hash correct, but comparison wrong (collision...?)");
 	return NULL;
 }
 
@@ -297,7 +287,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 			goto out;
 		}
 
-		bpf_printk("UDP flow lookup SUCCEEDED!");
+		// bpf_printk("UDP flow lookup SUCCEEDED!");
 		// bpf_printk("Header values, IP: %x -> %x (DST PORT: %x) ",
 		// 	bpf_ntohl(ip_hdr->saddr), bpf_ntohl(ip_hdr->daddr),
 		// 	udp_hdr->dest);
@@ -318,7 +308,7 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	}
 
 	ip_hdr->ttl--;
-	ip_hdr->tos = 0x7c;
+	// ip_hdr->tos = 0x7c;
 
 	/* Increase packet counters */
 	bpf_spin_lock(&flow->lock);
@@ -366,7 +356,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 
 		memset(&flow, 0, sizeof(flow));
 
-		bpf_printk("Insertin rule");
+		bpf_printk("Inserting rule");
 		/* Flow hash is always 0 here so use it to lookup xfe_flow struct */
 		flow = bpf_map_lookup_elem(&heap, &always_zero);
 		if (flow == NULL) {

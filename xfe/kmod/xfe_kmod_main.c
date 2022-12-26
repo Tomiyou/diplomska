@@ -370,7 +370,7 @@ static bool xfe_sync_conn(struct xfe_connection_sync *sync)
 	struct nf_conntrack_tuple tuple;
 	struct nf_conn *ct;
 
-	printk("xfe_sync_all_rules: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
+	printk("xfe_sync_conn: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
 
 	/*
 	 * Create a tuple so as to be able to look up a conntrack connection
@@ -910,7 +910,7 @@ static void xfe_handle_conntrack_event(struct nf_conntrack_tuple *orig_tuple, un
 static int xfe_conntrack_event(struct notifier_block *this,
 					   unsigned long events, void *ptr)
 #else
-static int xfe_conntrack_event(unsigned int events, struct nf_ct_event *item)
+static int xfe_conntrack_event(unsigned int events, const struct nf_ct_event *item)
 #endif
 {
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
@@ -960,7 +960,7 @@ static struct notifier_block xfe_conntrack_notifier = {
 };
 #else
 static struct nf_ct_event_notifier xfe_conntrack_notifier = {
-	.fcn = xfe_conntrack_event,
+	.ct_event = xfe_conntrack_event,
 };
 #endif
 #endif
@@ -1386,11 +1386,7 @@ static int __init xfe_init(void)
 	/*
 	 * Register a notifier hook to get fast notifications of expired connections.
 	 */
-	result = nf_conntrack_register_notifier(&init_net, &xfe_conntrack_notifier);
-	if (result < 0) {
-		DEBUG_ERROR("can't register nf notifier hook: %d\n", result);
-		goto exit4;
-	}
+	nf_conntrack_register_notifier(&init_net, &xfe_conntrack_notifier);
 #endif
 
 	nl_sock = netlink_kernel_create(&init_net, NETLINK_TEST, &cfg);
@@ -1415,7 +1411,7 @@ exit6:
 
 exit5:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_conntrack_unregister_notifier(&init_net, &xfe_conntrack_notifier);
+	nf_conntrack_unregister_notifier(&init_net);
 
 exit4:
 #endif
@@ -1476,7 +1472,7 @@ static void __exit xfe_exit(void)
 	kfree_skb(sync_skb);
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_conntrack_unregister_notifier(&init_net, &xfe_conntrack_notifier);
+	nf_conntrack_unregister_notifier(&init_net);
 
 #endif
 	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));

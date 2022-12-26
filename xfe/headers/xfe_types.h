@@ -2,8 +2,9 @@
 #define XFE_TYPES_H
 
 #include <linux/if_ether.h>
+#include <linux/filter.h>
 #include <linux/bpf.h>
-#include <stdbool.h>
+// #include <stdbool.h>
 
 /* Map hash lookup */
 #define XFE_HASH_SHIFT 12

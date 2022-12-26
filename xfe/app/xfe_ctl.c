@@ -278,7 +278,7 @@ int main(int argc, char **argv)
         for (i = 2; i < argc; i++) {
             printf("Attaching accelerator to interface %s\n", argv[i]);
 
-            err = snprintf(cmd, 512, "ip link set dev %s xdp off && ip link set dev %s xdp pinned /sys/fs/bpf/xfe/xfe_ingress", argv[i], argv[i]);
+            err = snprintf(cmd, 512, "ip link set dev %s xdp off && ip link set dev %s xdpdrv pinned /sys/fs/bpf/xfe/xfe_ingress", argv[i], argv[i]);
             if (err < 0) {
                 printf("Error formatting attach command\n");
                 goto exit;
