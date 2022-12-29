@@ -221,6 +221,7 @@ struct xfe_connection {
 	bool is_v4;
 	unsigned char smac[ETH_ALEN];
 	unsigned char dmac[ETH_ALEN];
+	long last_jiffies;
 };
 
 static int xfe_connections_size;
@@ -349,6 +350,8 @@ xfe_add_conn(struct xfe_connection *conn)
 		return NULL;
 	}
 
+	conn->last_jiffies = jiffies;
+
 	key = fc_conn_hash(&sic->src_ip, &sic->dest_ip,
 			   sic->src_port, sic->dest_port, conn->is_v4);
 
@@ -370,8 +373,6 @@ static bool xfe_sync_conn(struct xfe_connection_sync *sync)
 	struct nf_conntrack_tuple tuple;
 	struct nf_conn *ct;
 
-	printk("xfe_sync_conn: (%u -> %u) %u %llu\n", sync->src_port, sync->dest_port, sync->packets, sync->bytes);
-
 	/*
 	 * Create a tuple so as to be able to look up a conntrack connection
 	 */
@@ -384,18 +385,18 @@ static bool xfe_sync_conn(struct xfe_connection_sync *sync)
 	tuple.dst.u.all = sync->dest_port;
 	tuple.dst.dir = IP_CT_DIR_MAX;
 
-	printk("Conntrack lookup for %pI4 -> %pI4, %d %d\n", &sync->src_ip.ip, &sync->dest_ip.ip, ntohs(sync->src_port), ntohs(sync->dest_port));
+	DEBUG_TRACE("Conntrack lookup for %pI4 -> %pI4, %d %d\n",
+			&sync->src_ip.ip, &sync->dest_ip.ip,
+			ntohs(sync->src_port), ntohs(sync->dest_port));
  
 	/*
 	 * Look up conntrack connection
 	 */
 	h = nf_conntrack_find_get(&init_net, &nf_ct_zone_dflt, &tuple);
 	if (!h) {
-		// DEBUG_WARN("%px: NSS Sync: no conntrack connection\n", sync);
+		DEBUG_WARN("Conntrack entry not found\n");
 		return false;
 	}
-
-	printk("Found conntrack entry\n");
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
 
@@ -605,7 +606,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		sic.flags |= XFE_CREATE_FLAG_REMARK_PRIORITY;
 	}
 
-	printk("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+	DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
 		    sic.ip_proto, &sic.src_ip, &sic.dest_ip, sic.src_port, sic.dest_port);
 
 	/*
@@ -619,7 +620,7 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		conn->hits++;
 
 		if (!conn->offloaded) {
-			printk("Not offloaded %d\n", conn->hits);
+			printk("Connection not offloaded %d\n", conn->hits);
 			if (conn->offload_permit || conn->hits >= offload_at_pkts) {
 				printk("OFFLOADING CONNECTION, TOO MANY HITS\n");
 
@@ -835,8 +836,6 @@ static void xfe_sync_all_rules(struct work_struct *work)
 		struct xfe_connection_sync *sync = &sync_message->sync[count];
 		struct xfe_connection_create *conn_info = conn->sic;
 
-		printk("xfe_sync_all_rules: updating connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-		    conn_info->ip_proto, &conn_info->src_ip, &conn_info->dest_ip, conn_info->src_port, conn_info->dest_port);
 		sync->ip_proto = conn_info->ip_proto;
 		sync->src_ip = conn_info->src_ip;
 		sync->dest_ip = conn_info->dest_ip;
@@ -854,10 +853,48 @@ static void xfe_sync_all_rules(struct work_struct *work)
 
 	xfe_ipv4_sync_rules(sync_skb);
 
+	spin_lock_bh(&xfe_connections_lock);
 	for (i = 0; i < count; i++) {
 		struct xfe_connection_sync *sync = &sync_message->sync[i];
+
+		/* Touch expiration timer */
+		conn = xfe_find_conn(&sync->src_ip, &sync->dest_ip, sync->src_port, sync->dest_port, sync->ip_proto, true);
+		if (conn) {
+			if (sync->packets > 0) {
+				/* Update with current time */
+				conn->last_jiffies = jiffies;
+
+				DEBUG_TRACE("xfe_sync_all_rules: updating connection: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d | %u %llu\n",
+		    		sync->ip_proto, &sync->src_ip, &sync->dest_ip, sync->src_port, sync->dest_port, sync->packets, sync->bytes);
+			} else if ((jiffies - conn->last_jiffies) > (HZ * 15)) {
+				/* Delete connection */
+				struct xfe_connection_destroy sid;
+
+				/* Remove XDP entry */
+				sid.ip_proto = sync->ip_proto;
+				sid.src_ip = sync->src_ip;
+				sid.dest_ip = sync->dest_ip;
+				sid.src_port = sync->src_port;
+				sid.dest_port = sync->dest_port;
+				sid.packets = sync->packets;
+
+				DEBUG_TRACE("Try to clean up: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+						sid.ip_proto, &sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port);
+
+				xfe_ipv4_destroy_rule(&sid);
+
+				/* Remove kmod entry */
+				hash_del(&conn->hl);
+				xfe_connections_size--;
+				kfree(conn->sic);
+				kfree(conn);
+			}
+		}
+
+		/* Sync conntrack entry */
 		xfe_sync_conn(sync);
 	}
+	spin_unlock_bh(&xfe_connections_lock);
 
 skip_sync:
 	schedule_delayed_work_on(work_cpu, (struct delayed_work *)work, HZ);

@@ -37,8 +37,6 @@ static int run_bpf(enum xfe_kmod_action action, void *data, size_t data_len)
 
 static int run_bpf_sync(struct sk_buff *skb)
 {
-    int code;
-
     if (!prog) {
         printk(KERN_INFO "xfe netlink: no BPF program\n");
         return -1;
@@ -77,15 +75,11 @@ int xfe_set_xdp_program(int user_fd) {
 }
 
 int xfe_ipv4_create_rule(struct xfe_connection_create *sic) {
-    printk("xfe_ipv4_create_rule called with params\n");
-
     printk("New connection, MAC addresses %pM -> %pM\n", sic->xlate_src_mac, sic->xlate_dest_mac);
     return run_bpf(XFE_KMOD_INSERT, sic, sizeof(*sic));
 }
 
 void xfe_ipv4_destroy_rule(struct xfe_connection_destroy *sid) {
-    printk("xfe_ipv4_destroy_rule called with params\n");
-
     run_bpf(XFE_KMOD_DESTROY, sid, sizeof(*sid));
 }
 
@@ -103,20 +97,14 @@ void xfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev) {
 }
 
 void xfe_ipv4_update_rule(struct xfe_connection_create *sic) {
-    printk("xfe_ipv4_update_rule called with params\n");
-
     run_bpf(XFE_KMOD_UPDATE, sic, sizeof(*sic));
 }
 
 void xfe_ipv4_mark_rule(struct xfe_connection_mark *mark) {
-    printk("xfe_ipv4_mark_rule called with params\n");
-
     run_bpf(XFE_KMOD_MARK, mark, sizeof(*mark));
 }
 
 int xfe_ipv4_sync_rules(struct sk_buff *skb) {
-    printk("xfe_ipv4_sync_rules called with params\n");
-
     return run_bpf_sync(skb);
 }
 
