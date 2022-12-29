@@ -813,158 +813,6 @@ static void xfe_update_mark(struct xfe_connection_mark *mark, bool is_v4)
 	spin_unlock_bh(&xfe_connections_lock);
 }
 
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-/*
- * xfe_handle_conntrack_event()
- *	Callback event invoked when a conntrack connection's state changes.
- */
-static void xfe_handle_conntrack_event(struct nf_conntrack_tuple *orig_tuple, unsigned long events,
-									   bool is_v4, __u8 ip_proto, __u32 ct_mark)
-{
-	struct xfe_connection_destroy sid;
-	struct xfe_connection *conn;
-
-	sid.ip_proto = ip_proto;
-	/*
-	 * Extract information from the conntrack connection.  We're only interested
-	 * in nominal connection information (i.e. we're ignoring any NAT information).
-	 */
-	if (is_v4) {
-		sid.src_ip.ip = (__be32)orig_tuple->src.u3.ip;
-		sid.dest_ip.ip = (__be32)orig_tuple->dst.u3.ip;
-	} else {
-		DEBUG_TRACE("ignoring non-IPv4 connection\n");
-		return;
-	}
-
-	switch (sid.ip_proto) {
-	case IPPROTO_TCP:
-		sid.src_port = orig_tuple->src.u.tcp.port;
-		sid.dest_port = orig_tuple->dst.u.tcp.port;
-		break;
-
-	case IPPROTO_UDP:
-		sid.src_port = orig_tuple->src.u.udp.port;
-		sid.dest_port = orig_tuple->dst.u.udp.port;
-		break;
-
-	default:
-		DEBUG_TRACE("unhandled protocol: %d\n", sid.ip_proto);
-		return;
-	}
-
-	/*
-	 * Check for an updated mark
-	 */
-	if ((events & (1 << IPCT_MARK)) && (ct_mark != 0)) {
-		struct xfe_connection_mark mark;
-
-		mark.protocol = sid.ip_proto;
-		mark.src_ip = sid.src_ip;
-		mark.dest_ip = sid.dest_ip;
-		mark.src_port = sid.src_port;
-		mark.dest_port = sid.dest_port;
-		mark.mark = ct_mark;
-
-		xfe_ipv4_mark_rule(&mark);
-		xfe_update_mark(&mark, is_v4);
-	}
-
-	/*
-	 * We're only interested in destroy events at this point
-	 */
-	if (unlikely(!(events & (1 << IPCT_DESTROY)))) {
-		DEBUG_TRACE("ignoring non-destroy event\n");
-		return;
-	}
-
-	DEBUG_TRACE("Try to clean up: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-		    sid.ip_proto, &sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port);
-
-	spin_lock_bh(&xfe_connections_lock);
-
-	conn = xfe_find_conn(&sid.src_ip, &sid.dest_ip, sid.src_port, sid.dest_port, sid.ip_proto, is_v4);
-	if (conn) {
-		DEBUG_TRACE("Free connection\n");
-
-		hash_del(&conn->hl);
-		xfe_connections_size--;
-		kfree(conn->sic);
-		kfree(conn);
-	} else {
-		xfe_incr_exceptions(XFE_EXCEPTION_CT_DESTROY_MISS);
-	}
-
-	spin_unlock_bh(&xfe_connections_lock);
-
-	xfe_ipv4_destroy_rule(&sid);
-
-	return;
-}
-
-/*
- * xfe_conntrack_event()
- *	Callback event invoked when a conntrack connection's state changes.
- */
-#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-static int xfe_conntrack_event(struct notifier_block *this,
-					   unsigned long events, void *ptr)
-#else
-static int xfe_conntrack_event(unsigned int events, const struct nf_ct_event *item)
-#endif
-{
-#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	struct nf_ct_event *item = ptr;
-#endif
-	struct nf_conn *ct = item->ct;
-	struct nf_conntrack_tuple ct_tuple;
-	__u8 ip_proto;
-	bool is_v4;
-
-	/*
-	 * If we don't have a conntrack entry then we're done.
-	 */
-	if (unlikely(!ct)) {
-		DEBUG_WARN("no ct in conntrack event callback\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
-	 * If this is an untracked connection then we can't have any state either.
-	 */
-	if (unlikely((ct->status & IPS_CONFIRMED) == 0)) {
-		DEBUG_TRACE("ignoring untracked conn\n");
-		return NOTIFY_DONE;
-	}
-
-	is_v4 = nf_ct_l3num(ct) == AF_INET;
-
-	/* Original direction */
-	ct_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	ip_proto = (s32)ct_tuple.dst.protonum;
-	xfe_handle_conntrack_event(&ct_tuple, events, is_v4, ip_proto, ct->mark);
-
-	/* Reply direction */
-	ct_tuple = ct->tuplehash[IP_CT_DIR_REPLY].tuple;
-	ip_proto = (s32)ct_tuple.dst.protonum;
-	xfe_handle_conntrack_event(&ct_tuple, events, is_v4, ip_proto, ct->mark);
-	return NOTIFY_DONE;
-}
-
-/*
- * Netfilter conntrack event system to monitor connection tracking changes
- */
-#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-static struct notifier_block xfe_conntrack_notifier = {
-	.notifier_call = xfe_conntrack_event,
-};
-#else
-static struct nf_ct_event_notifier xfe_conntrack_notifier = {
-	.ct_event = xfe_conntrack_event,
-};
-#endif
-#endif
-
 /*
  * Structure to establish a hook into the post routing netfilter point - this
  * will pick up local outbound and packets going from one interface to another.
@@ -1262,13 +1110,6 @@ static int __init xfe_init(void)
 	INIT_DELAYED_WORK(&sync_dwork, xfe_sync_all_rules);
 	schedule_delayed_work_on(work_cpu, &sync_dwork, HZ);
 
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-	/*
-	 * Register a notifier hook to get fast notifications of expired connections.
-	 */
-	nf_conntrack_register_notifier(&init_net, &xfe_conntrack_notifier);
-#endif
-
 	nl_sock = netlink_kernel_create(&init_net, NETLINK_TEST, &cfg);
     if (nl_sock == NULL)
     {
@@ -1290,11 +1131,6 @@ exit6:
 	netlink_kernel_release(nl_sock);
 
 exit5:
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_conntrack_unregister_notifier(&init_net);
-
-exit4:
-#endif
 	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
 
 	kfree_skb(sync_skb);
@@ -1351,10 +1187,6 @@ static void __exit xfe_exit(void)
 
 	kfree_skb(sync_skb);
 
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_conntrack_unregister_notifier(&init_net);
-
-#endif
 	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
 
 	unregister_inetaddr_notifier(&sc->inet_notifier);
