@@ -5,6 +5,8 @@ CC ?= gcc
 BPF_CFLAGS ?= -I../headers/ -I../../linux/tools/lib/
 
 all:
+	$(CLANG) -O2 -Wall $(BPF_CFLAGS) -g -target bpf -c xfe_accelerator.c -o xfe_accelerator.o
+generate:
 	$(CLANG) -S \
 	    -target bpf \
 	    -D __BPF_TRACING__ \
@@ -18,5 +20,3 @@ all:
 	llc -march=bpf -filetype=obj -o xfe_accelerator.o xfe_accelerator.ll
 clean:
 	rm -rf xfe_accelerator.ll xfe_accelerator.o
-generate:
-	$(CLANG) -O2 -Wall $(BPF_CFLAGS) -g -target bpf -c xfe_accelerator.c -o xfe_accelerator.o

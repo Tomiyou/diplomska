@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* BPF stuff */
 #include <linux/bpf.h>
@@ -38,12 +39,12 @@
  * 3 = 2 + INFO
  * 4 = 3 + TRACE
  */
-#define DEBUG_LEVEL 4
+#define DEBUG_LEVEL 3
 
 #if (DEBUG_LEVEL < 1)
 	#define DEBUG_ERROR(...)
 #else
-	#define DEBUG_ERROR(...) bpf_printk(__VA_ARGS__)
+	#define DEBUG_ERROR(...) bpf_printk("ERROR: " __VA_ARGS__)
 #endif
 
 #if (DEBUG_LEVEL < 2)
@@ -230,6 +231,51 @@ struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
 	return NULL;
 }
 
+/* IPv4 */
+__attribute__((__always_inline__))
+static inline __u16 csum_fold_helper1(__u64 csum) {
+	int i;
+	#pragma unroll
+	for (i = 0; i < 4; i ++) {
+		if (csum >> 16)
+			csum = (csum & 0xffff) + (csum >> 16);
+	}
+	return ~csum;
+}
+
+__attribute__((__always_inline__))
+static inline void ipv4_csum(void *data_start, int data_size,  __u64 *csum) {
+	*csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
+	*csum = csum_fold_helper1(*csum);
+}
+
+/* L4 */
+static __always_inline uint32_t csum_add(uint32_t addend, uint32_t csum) 
+{
+	uint32_t res = csum;
+	res += addend;
+	return (res + (res < addend));
+}
+
+static __always_inline uint32_t csum_sub(uint32_t addend, uint32_t csum) 
+{
+	return csum_add(csum, ~addend);
+}
+
+static __always_inline uint16_t csum_fold_helper2(uint32_t csum) 
+{
+	uint32_t r = csum << 16 | csum >> 16;
+	csum = ~csum;
+	csum -= r;
+	return (uint16_t)(csum >> 16);
+}
+
+static __always_inline uint16_t csum_diff4(uint32_t from, uint32_t to, uint16_t csum) 
+{
+	uint32_t tmp = csum_sub(from, ~((uint32_t)csum));
+	return csum_fold_helper2(csum_add(to, tmp));
+}
+
 SEC("xfe_ingress")
 int xfe_ingress_fn(struct xdp_md *ctx)
 {
@@ -288,26 +334,35 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		}
 
 		DEBUG_TRACE("TCP flow lookup SUCCEEDEDs!");
-
-		/* Forward the packet */
-		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
-		memcpy(eth_hdr->h_dest, flow->xlate_dst_mac, ETH_ALEN);
-		ip_hdr->saddr = flow->xlate_src_ip;
-		ip_hdr->daddr = flow->xlate_dest_ip;
-		tcp_hdr->source = flow->xlate_src_port;
-		tcp_hdr->dest = flow->xlate_dest_port;
 		DEBUG_TRACE("L2 %x:%x:%x", flow->xlate_src_mac[0], flow->xlate_src_mac[1], flow->xlate_src_mac[2]);
 		DEBUG_TRACE("   %x:%x:%x", flow->xlate_src_mac[3], flow->xlate_src_mac[4], flow->xlate_src_mac[5]);
 		DEBUG_TRACE("L2 %x:%x:%x", flow->xlate_dst_mac[0], flow->xlate_dst_mac[1], flow->xlate_dst_mac[2]);
 		DEBUG_TRACE("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
 		DEBUG_TRACE("L3 %pI4 -> %pI4", &ip_hdr->saddr, &ip_hdr->daddr);
 		DEBUG_TRACE("L3 %pI4 -> %pI4", &flow->xlate_src_ip, &flow->xlate_dest_ip);
-		DEBUG_TRACE("L4 %x -> %x\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
+		DEBUG_TRACE("L4 %u -> %u\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
 
 		/* If we have any TCP flag, send packet through slowpath */
 		if (tcp_hdr->syn || tcp_hdr->rst || tcp_hdr->fin) {
 			goto out;
 		}
+
+		/* Forward the packet */
+		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
+		memcpy(eth_hdr->h_dest, flow->xlate_dst_mac, ETH_ALEN);
+
+		/* L3 header */
+		tcp_hdr->check = csum_diff4(ip_hdr->daddr, flow->xlate_dest_ip, tcp_hdr->check);
+		ip_hdr->daddr = flow->xlate_dest_ip;
+		tcp_hdr->check = csum_diff4(ip_hdr->saddr, flow->xlate_src_ip, tcp_hdr->check);
+		ip_hdr->saddr = flow->xlate_src_ip;
+		ip_hdr->ttl = ip_hdr->ttl - 1;
+
+		/* L4 header */
+		tcp_hdr->check = csum_diff4(tcp_hdr->source, flow->xlate_src_port, tcp_hdr->check);
+		tcp_hdr->source = flow->xlate_src_port;
+		tcp_hdr->check = csum_diff4(tcp_hdr->dest, flow->xlate_dest_port, tcp_hdr->check);
+		tcp_hdr->dest = flow->xlate_dest_port;
 	} else if (ip_hdr->protocol == IPPROTO_UDP) {
 		struct udphdr *udp_hdr;
 
@@ -339,16 +394,28 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 		/* Forward the packet */
 		memcpy(eth_hdr->h_source, flow->xlate_src_mac, ETH_ALEN);
 		memcpy(eth_hdr->h_dest, flow->xlate_dst_mac, ETH_ALEN);
-		ip_hdr->saddr = flow->xlate_src_ip;
+
+		/* L3 header */
+		udp_hdr->check = csum_diff4(ip_hdr->daddr, flow->xlate_dest_ip, udp_hdr->check);
 		ip_hdr->daddr = flow->xlate_dest_ip;
+		udp_hdr->check = csum_diff4(ip_hdr->saddr, flow->xlate_src_ip, udp_hdr->check);
+		ip_hdr->saddr = flow->xlate_src_ip;
+		ip_hdr->ttl = ip_hdr->ttl - 1;
+
+		/* L4 header */
+		udp_hdr->check = csum_diff4(udp_hdr->source, flow->xlate_src_port, udp_hdr->check);
 		udp_hdr->source = flow->xlate_src_port;
+		udp_hdr->check = csum_diff4(udp_hdr->dest, flow->xlate_dest_port, udp_hdr->check);
 		udp_hdr->dest = flow->xlate_dest_port;
 	} else {
 		goto out;
 	}
 
-	ip_hdr->ttl--;
-	// ip_hdr->tos = 0x7c;
+	/* IPv4 checksum */
+	ip_hdr->check = 0;
+	__u64 ip_csum = 0;
+	ipv4_csum(ip_hdr, sizeof(*ip_hdr), &ip_csum);
+	ip_hdr->check = ip_csum;
 
 	/* Increase packet counters */
 	bpf_spin_lock(&flow->lock);
@@ -358,9 +425,11 @@ int xfe_ingress_fn(struct xdp_md *ctx)
 	flow->byte_count_tick += (ctx->data_end - ctx->data);
 	bpf_spin_unlock(&flow->lock);
 
-	// bpf_redirect_map(&tx_port, flow->xmit_ifindex, 0);
+	/* Redirect the packet to the correct output interface */
 	action = bpf_redirect(flow->xmit_ifindex, 0);
-	DEBUG_ERROR("Redirect did not go through %d %ld\n", flow->xmit_ifindex, action);
+	if (action == XDP_ABORTED) {
+		DEBUG_ERROR("Redirect did not go through %d %ld\n", flow->xmit_ifindex, action);
+	}
 
 out:
 	return action;
@@ -489,10 +558,11 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		flow_hash = get_flow_hash(destroy->ip_proto, destroy->src_ip.ip,
 					  destroy->dest_ip.ip, destroy->src_port,
 					  destroy->dest_port);
-		DEBUG_INFO("netfilter_hook_fn: destroy hash %x", flow_hash);
 
 		/* Remove flow from hash table */
 		err = bpf_map_delete_elem(&xfe_flows, &flow_hash);
+
+		DEBUG_INFO("netfilter_hook_fn: destroy hash %x %d", flow_hash, err);
 
 		/* Update stats */
 		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
