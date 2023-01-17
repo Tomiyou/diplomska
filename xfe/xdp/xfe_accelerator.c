@@ -590,7 +590,7 @@ int sinhronizator_fn(struct __sk_buff *skb)
 
 		sync_msg = (struct xfe_kmod_message_sync *) data;
 
-		DEBUG_INFO("Connection SYNC called: %u\n", sync_msg->connection_count);
+		DEBUG_TRACE("Connection SYNC called: %u\n", sync_msg->connection_count);
 
 		/* Get counters for each flow entry */
 		for (i = 0; i < 1024; i++) {
@@ -605,7 +605,7 @@ int sinhronizator_fn(struct __sk_buff *skb)
 				continue;
 			}
 
-			DEBUG_INFO("Syncing connection: %u %u %u\n", bpf_ntohs(sync->src_port), bpf_ntohs(sync->dest_port), flow->packet_count_tick);
+			DEBUG_TRACE("Syncing connection: %u %u %u\n", bpf_ntohs(sync->src_port), bpf_ntohs(sync->dest_port), flow->packet_count_tick);
 
 			/* Copy and reset counters */
 			bpf_spin_lock(&flow->lock);
