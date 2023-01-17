@@ -78,8 +78,6 @@ struct xfe_flow {
 	__u32 mark;
 	__u32 priority;
 	__u32 dscp;
-
-	__u32 hash;
 };
 
 #define XFE_CREATE_FLAG_NO_SEQ_CHECK (1<<0)

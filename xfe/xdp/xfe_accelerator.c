@@ -74,11 +74,19 @@
 # define memset(dest, chr, n)   __builtin_memset((dest), (chr), (n))
 #endif
 
+struct xfe_flow_key {
+	__u8 ip_proto;
+	__be32 src_ip;
+	__be32 dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
+};
+
 /* This map stores all the accelerated XFE flows
  */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, __u32);
+	__type(key, struct xfe_flow_key);
 	__type(value, struct xfe_flow);
 	__uint(max_entries, XFE_HASH_SIZE);
 } xfe_flows SEC(".maps");
@@ -189,48 +197,6 @@ static __always_inline struct udphdr *parse_udphdr(void *data_start,
 	return udp_header; /* network-byte-order */
 }
 
-static __always_inline
-__u32 get_flow_hash(__u8 ip_proto, __be32 src_ip,
-		    __be32 dest_ip, __be16 src_port,
-		    __be16 dest_port)
-{
-	__u32 hash = bpf_ntohl(src_ip ^ dest_ip) ^ ip_proto ^ bpf_ntohs(src_port ^ dest_port);
-
-	return ((hash >> XFE_HASH_SHIFT) ^ hash) & XFE_HASH_MASK;
-}
-
-static __always_inline
-struct xfe_flow *lookup_flow(__u8 ip_proto, __be32 src_ip, __be32 dest_ip,
-			     __be16 src_port, __be16 dest_port,
-			     __u32 ingress_ifindex)
-{
-	struct xfe_flow *flow;
-	__u32 hash = get_flow_hash(ip_proto, src_ip, dest_ip,
-				   src_port, dest_port);
-
-	/* First check if we can actually find the flow in the hashmap */
-	flow = bpf_map_lookup_elem(&xfe_flows, &hash);
-	if (flow == NULL) {
-		return NULL;
-	}
-
-	/* Two flows cannot have the same L3 and L4 src and src, while
-	 * having different interfaces or different destination MACs.
-	 * Therefore it is pointless to compare those two things
-	 */
-	if (flow->ip_proto == ip_proto &&
-	    flow->src_ip == src_ip &&
-	    flow->dest_ip == dest_ip &&
-	    flow->src_port == src_port &&
-	    flow->dest_port == dest_port) 
-	{
-		return flow;
-	}
-
-	DEBUG_WARN("Hash correct, but comparison wrong (collision...?)");
-	return NULL;
-}
-
 /* IPv4 */
 __attribute__((__always_inline__))
 static inline __u16 csum_fold_helper1(__u64 csum) {
@@ -287,6 +253,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	struct ethhdr *eth_hdr;
 	struct iphdr *ip_hdr;
 	struct xfe_flow *flow;
+	struct xfe_flow_key flow_key = {0};
 
 	/* Default action */
 	long action = XDP_PASS;
@@ -326,9 +293,12 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		frame_pointer += sizeof(*tcp_hdr);
 
 		/* Do flow lookup */
-		flow = lookup_flow(ip_hdr->protocol, ip_hdr->saddr, ip_hdr->daddr,
-				   tcp_hdr->source, tcp_hdr->dest,
-				   ctx->ingress_ifindex);
+		flow_key.ip_proto = ip_hdr->protocol;
+		flow_key.src_ip = ip_hdr->saddr;
+		flow_key.dest_ip = ip_hdr->daddr;
+		flow_key.src_port = tcp_hdr->source;
+		flow_key.dest_port = tcp_hdr->dest;
+		flow = bpf_map_lookup_elem(&xfe_flows, &flow_key);
 		if (!flow) {
 			goto out;
 		}
@@ -375,9 +345,12 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		frame_pointer += sizeof(*udp_hdr);
 
 		/* Do flow lookup */
-		flow = lookup_flow(ip_hdr->protocol, ip_hdr->saddr, ip_hdr->daddr,
-				   udp_hdr->source, udp_hdr->dest,
-				   ctx->ingress_ifindex);
+		flow_key.ip_proto = ip_hdr->protocol;
+		flow_key.src_ip = ip_hdr->saddr;
+		flow_key.dest_ip = ip_hdr->daddr;
+		flow_key.src_port = udp_hdr->source;
+		flow_key.dest_port = udp_hdr->dest;
+		flow = bpf_map_lookup_elem(&xfe_flows, &flow_key);
 		if (!flow) {
 			goto out;
 		}
@@ -441,6 +414,8 @@ int sinhronizator_fn(struct __sk_buff *skb)
 	void *data = (void *)(long)skb->data;
 	void *data_end = (void *)(long)skb->data_end;
 	struct xfe_instance *xfe;
+	struct xfe_flow *flow;
+	struct xfe_flow_key flow_key = {0};
 	long err = 0;
 
 	/* Instructions on what to do */
@@ -460,8 +435,6 @@ int sinhronizator_fn(struct __sk_buff *skb)
 
 	if (msg->action == XFE_KMOD_INSERT) {
 		struct xfe_connection_create *create = &msg->create;
-		struct xfe_flow *flow;
-		__u32 flow_hash = 0;
 
 		memset(&flow, 0, sizeof(flow));
 
@@ -520,22 +493,18 @@ int sinhronizator_fn(struct __sk_buff *skb)
 			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC;
 		}
 
-		/* Get flow hash for the passed connection */
-		flow_hash = get_flow_hash(create->ip_proto, create->src_ip.ip,
-					  create->dest_ip.ip, create->src_port,
-					  create->dest_port);
-		DEBUG_INFO("sinhronizator_fn: L3 details %u %pI4 %pI4", create->ip_proto, &create->src_ip.ip, &create->dest_ip.ip);
-		DEBUG_INFO("sinhronizator_fn: L4 details %u %u", create->src_port, create->dest_port);
-		DEBUG_INFO("sinhronizator_fn: create hash %x", flow_hash);
-		flow->hash = flow_hash;
-
 		/* Insert flow into hash table */
-		err = bpf_map_update_elem(&xfe_flows, &flow_hash, flow, BPF_NOEXIST);
+		flow_key.ip_proto = create->ip_proto;
+		flow_key.src_ip = create->src_ip.ip;
+		flow_key.dest_ip = create->dest_ip.ip;
+		flow_key.src_port = create->src_port;
+		flow_key.dest_port = create->dest_port;
+		err = bpf_map_update_elem(&xfe_flows, &flow_key, flow, BPF_NOEXIST);
 		if (err) {
-			/* TODO: handle hash collisions */
 			DEBUG_WARN("bpf_map_update_elem failed, flow already exists");
+		} else {
+			DEBUG_INFO("sinhronizator_fn: create hash %d", err);
 		}
-		DEBUG_INFO("");
 
 		/* Update stats */
 		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
@@ -552,17 +521,15 @@ int sinhronizator_fn(struct __sk_buff *skb)
 		return err;
 	} else if (msg->action == XFE_KMOD_DESTROY) {
 		struct xfe_connection_destroy *destroy = &msg->destroy;
-		__u32 flow_hash;
-
-		/* Get flow hash for the passed connection */
-		flow_hash = get_flow_hash(destroy->ip_proto, destroy->src_ip.ip,
-					  destroy->dest_ip.ip, destroy->src_port,
-					  destroy->dest_port);
 
 		/* Remove flow from hash table */
-		err = bpf_map_delete_elem(&xfe_flows, &flow_hash);
-
-		DEBUG_INFO("sinhronizator_fn: destroy hash %x %d", flow_hash, err);
+		flow_key.ip_proto = destroy->ip_proto;
+		flow_key.src_ip = destroy->src_ip.ip;
+		flow_key.dest_ip = destroy->dest_ip.ip;
+		flow_key.src_port = destroy->src_port;
+		flow_key.dest_port = destroy->dest_port;
+		err = bpf_map_delete_elem(&xfe_flows, &flow_key);
+		DEBUG_INFO("sinhronizator_fn: destroy hash %d", err);
 
 		/* Update stats */
 		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
@@ -580,7 +547,6 @@ int sinhronizator_fn(struct __sk_buff *skb)
 	} else if (msg->action == XFE_KMOD_UPDATE) {
 	} else if (msg->action == XFE_KMOD_SYNC) {
 		struct xfe_connection_sync *sync;
-		struct xfe_flow *flow;
 		int i;
 
 		if (data + sync_size > data_end) {
@@ -599,8 +565,12 @@ int sinhronizator_fn(struct __sk_buff *skb)
 			}
 
 			sync = &sync_msg->sync[i];
-			flow = lookup_flow(sync->ip_proto, sync->src_ip.ip, sync->dest_ip.ip,
-					sync->src_port, sync->dest_port, sync->ifindex);
+			flow_key.ip_proto = sync->ip_proto;
+			flow_key.src_ip = sync->src_ip.ip;
+			flow_key.dest_ip = sync->dest_ip.ip;
+			flow_key.src_port = sync->src_port;
+			flow_key.dest_port = sync->dest_port;
+			flow = bpf_map_lookup_elem(&xfe_flows, &flow_key);
 			if (!flow) {
 				continue;
 			}
