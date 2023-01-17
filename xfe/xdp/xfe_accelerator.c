@@ -276,8 +276,8 @@ static __always_inline uint16_t csum_diff4(uint32_t from, uint32_t to, uint16_t 
 	return csum_fold_helper2(csum_add(to, tmp));
 }
 
-SEC("xfe_ingress")
-int xfe_ingress_fn(struct xdp_md *ctx)
+SEC("posredovalnik")
+int posredovalnik_fn(struct xdp_md *ctx)
 {
 	void *data_start = (void *)(long)ctx->data;
 	void *data_end = (void *)(long)ctx->data_end;
@@ -435,8 +435,8 @@ out:
 	return action;
 }
 
-SEC("netfilter_hook")
-int netfilter_hook_fn(struct __sk_buff *skb)
+SEC("sinhronizator")
+int sinhronizator_fn(struct __sk_buff *skb)
 {
 	void *data = (void *)(long)skb->data;
 	void *data_end = (void *)(long)skb->data_end;
@@ -452,7 +452,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 	/* Byte-count bounds check; check if msg + size of header
 	 * is after data_end. */
 	if (data + msg_size > data_end) {
-		DEBUG_ERROR("netfilter_hook_fn: data bound check failed!");
+		DEBUG_ERROR("sinhronizator_fn: data bound check failed!");
 		return -1;
 	}
 
@@ -524,9 +524,9 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		flow_hash = get_flow_hash(create->ip_proto, create->src_ip.ip,
 					  create->dest_ip.ip, create->src_port,
 					  create->dest_port);
-		DEBUG_INFO("netfilter_hook_fn: L3 details %u %pI4 %pI4", create->ip_proto, &create->src_ip.ip, &create->dest_ip.ip);
-		DEBUG_INFO("netfilter_hook_fn: L4 details %u %u", create->src_port, create->dest_port);
-		DEBUG_INFO("netfilter_hook_fn: create hash %x", flow_hash);
+		DEBUG_INFO("sinhronizator_fn: L3 details %u %pI4 %pI4", create->ip_proto, &create->src_ip.ip, &create->dest_ip.ip);
+		DEBUG_INFO("sinhronizator_fn: L4 details %u %u", create->src_port, create->dest_port);
+		DEBUG_INFO("sinhronizator_fn: create hash %x", flow_hash);
 		flow->hash = flow_hash;
 
 		/* Insert flow into hash table */
@@ -562,7 +562,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		/* Remove flow from hash table */
 		err = bpf_map_delete_elem(&xfe_flows, &flow_hash);
 
-		DEBUG_INFO("netfilter_hook_fn: destroy hash %x %d", flow_hash, err);
+		DEBUG_INFO("sinhronizator_fn: destroy hash %x %d", flow_hash, err);
 
 		/* Update stats */
 		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
@@ -584,7 +584,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		int i;
 
 		if (data + sync_size > data_end) {
-			DEBUG_ERROR("netfilter_hook_fn: data bound check failed!");
+			DEBUG_ERROR("sinhronizator_fn: data bound check failed!");
 			return -1;
 		}
 
@@ -617,7 +617,7 @@ int netfilter_hook_fn(struct __sk_buff *skb)
 		}
 
 	} else {
-		DEBUG_ERROR("netfilter_hook_fn: unknown action received %u", msg->action);
+		DEBUG_ERROR("sinhronizator_fn: unknown action received %u", msg->action);
 	}
 
 	return 0;

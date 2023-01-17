@@ -53,7 +53,7 @@ static int load_xdp(const char *obj_path)
     {
         const char *title = bpf_program__section_name(prog);
         int error;
-        if (strcmp(title, "netfilter_hook") == 0) {
+        if (strcmp(title, "sinhronizator") == 0) {
             error = bpf_program__set_sched_cls(prog); // or sched_act?
             printf(" - %s (set program type to sched_cls)\n", title);
         } else {
@@ -176,7 +176,7 @@ static int send_netlink(void *data, size_t data_len)
 
 int get_prog_fd()
 {
-    prog_fd = bpf_obj_get(OBJ_PIN_PATH "/netfilter_hook");
+    prog_fd = bpf_obj_get(OBJ_PIN_PATH "/sinhronizator");
     return prog_fd;
 }
 
@@ -240,7 +240,7 @@ int main(int argc, char **argv)
             goto exit;
         }
 
-        /* Get netfilter_hook prog FD */
+        /* Get sinhronizator prog FD */
         if (get_prog_fd() < 0)
         {
             printf("Could not get prog FD.\n");
@@ -248,7 +248,7 @@ int main(int argc, char **argv)
             goto exit;
         }
 
-        /* Send netfilter_hook prog FD to kmod */
+        /* Send sinhronizator prog FD to kmod */
         err = kmod_set_prog_fd(prog_fd);
         if (err)
         {
@@ -278,7 +278,7 @@ int main(int argc, char **argv)
         for (i = 2; i < argc; i++) {
             printf("Attaching accelerator to interface %s\n", argv[i]);
 
-            err = snprintf(cmd, 512, "ip link set dev %s xdp off && ip link set dev %s xdpdrv pinned /sys/fs/bpf/xfe/xfe_ingress", argv[i], argv[i]);
+            err = snprintf(cmd, 512, "ip link set dev %s xdp off && ip link set dev %s xdpdrv pinned /sys/fs/bpf/xfe/posredovalnik", argv[i], argv[i]);
             if (err < 0) {
                 printf("Error formatting attach command\n");
                 goto exit;
