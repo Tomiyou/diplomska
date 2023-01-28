@@ -5,7 +5,7 @@ CC ?= gcc
 BPF_CFLAGS ?= -I../headers/ -I../../linux/tools/lib/
 
 all:
-	$(CLANG) -O2 -Wall $(BPF_CFLAGS) -g -target bpf -c xfe_accelerator.c -o xfe_accelerator.o
+	$(CLANG) -O2 -Wall $(BPF_CFLAGS) -g -target bpf -c xdp_pospesevalnik.c -o xdp_pospesevalnik.o
 generate:
 	$(CLANG) -S \
 	    -target bpf \
@@ -16,7 +16,7 @@ generate:
 	    -Wno-pointer-sign \
 	    -Wno-compare-distinct-pointer-types \
 	    -Werror \
-	    -O2 -emit-llvm -c -g -o xfe_accelerator.ll xfe_accelerator.c
-	llc -march=bpf -filetype=obj -o xfe_accelerator.o xfe_accelerator.ll
+	    -O2 -emit-llvm -c -g -o xdp_pospesevalnik.ll xdp_pospesevalnik.c
+	llc -march=bpf -filetype=obj -o xdp_pospesevalnik.o xdp_pospesevalnik.ll
 clean:
-	rm -rf xfe_accelerator.ll xfe_accelerator.o
+	rm -rf xdp_pospesevalnik.ll xdp_pospesevalnik.o

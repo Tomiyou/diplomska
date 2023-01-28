@@ -89,7 +89,7 @@ struct {
 	__type(key, struct xfe_flow_key);
 	__type(value, struct xfe_flow);
 	__uint(max_entries, XFE_HASH_SIZE);
-} xfe_flows SEC(".maps");
+} xdp_povezave SEC(".maps");
 
 struct xfe_instance {
 	/* Global instance lock */
@@ -115,7 +115,7 @@ struct {
 	__type(key, __u32);
 	__type(value, struct xfe_instance);
 	__uint(max_entries, 1);
-} xfe_global_instance SEC(".maps");
+} globalne_spremenljivke SEC(".maps");
 
 /* Map for storing large structs
  * This is how we get around the 512 byte stack limit
@@ -126,7 +126,7 @@ struct {
     __uint(key_size, sizeof(__u32));
     __uint(value_size, sizeof(struct xfe_flow));
     __uint(max_entries, 1);
-} heap SEC(".maps");
+} ekstra_pomnilnik SEC(".maps");
 
 static const __u32 always_zero = 0;
 
@@ -298,7 +298,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		flow_key.dest_ip = ip_hdr->daddr;
 		flow_key.src_port = tcp_hdr->source;
 		flow_key.dest_port = tcp_hdr->dest;
-		flow = bpf_map_lookup_elem(&xfe_flows, &flow_key);
+		flow = bpf_map_lookup_elem(&xdp_povezave, &flow_key);
 		if (!flow) {
 			goto out;
 		}
@@ -350,7 +350,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		flow_key.dest_ip = ip_hdr->daddr;
 		flow_key.src_port = udp_hdr->source;
 		flow_key.dest_port = udp_hdr->dest;
-		flow = bpf_map_lookup_elem(&xfe_flows, &flow_key);
+		flow = bpf_map_lookup_elem(&xdp_povezave, &flow_key);
 		if (!flow) {
 			goto out;
 		}
@@ -440,7 +440,7 @@ int sinhronizator_fn(struct __sk_buff *skb)
 
 		DEBUG_INFO("Inserting rule");
 		/* Flow hash is always 0 here so use it to lookup xfe_flow struct */
-		flow = bpf_map_lookup_elem(&heap, &always_zero);
+		flow = bpf_map_lookup_elem(&ekstra_pomnilnik, &always_zero);
 		if (flow == NULL) {
 			DEBUG_ERROR("Error getting stack bypass struct");
 			return -1;
@@ -499,7 +499,7 @@ int sinhronizator_fn(struct __sk_buff *skb)
 		flow_key.dest_ip = create->dest_ip.ip;
 		flow_key.src_port = create->src_port;
 		flow_key.dest_port = create->dest_port;
-		err = bpf_map_update_elem(&xfe_flows, &flow_key, flow, BPF_NOEXIST);
+		err = bpf_map_update_elem(&xdp_povezave, &flow_key, flow, BPF_NOEXIST);
 		if (err) {
 			DEBUG_WARN("bpf_map_update_elem failed, flow already exists");
 		} else {
@@ -507,7 +507,7 @@ int sinhronizator_fn(struct __sk_buff *skb)
 		}
 
 		/* Update stats */
-		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
+		xfe = bpf_map_lookup_elem(&globalne_spremenljivke, &always_zero);
 		if (!xfe) {
 			return err;
 		}
@@ -528,11 +528,11 @@ int sinhronizator_fn(struct __sk_buff *skb)
 		flow_key.dest_ip = destroy->dest_ip.ip;
 		flow_key.src_port = destroy->src_port;
 		flow_key.dest_port = destroy->dest_port;
-		err = bpf_map_delete_elem(&xfe_flows, &flow_key);
+		err = bpf_map_delete_elem(&xdp_povezave, &flow_key);
 		DEBUG_INFO("sinhronizator_fn: destroy hash %d", err);
 
 		/* Update stats */
-		xfe = bpf_map_lookup_elem(&xfe_global_instance, &always_zero);
+		xfe = bpf_map_lookup_elem(&globalne_spremenljivke, &always_zero);
 		if (!xfe) {
 			return err;
 		}
@@ -570,7 +570,7 @@ int sinhronizator_fn(struct __sk_buff *skb)
 			flow_key.dest_ip = sync->dest_ip.ip;
 			flow_key.src_port = sync->src_port;
 			flow_key.dest_port = sync->dest_port;
-			flow = bpf_map_lookup_elem(&xfe_flows, &flow_key);
+			flow = bpf_map_lookup_elem(&xdp_povezave, &flow_key);
 			if (!flow) {
 				continue;
 			}
