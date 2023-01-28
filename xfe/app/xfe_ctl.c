@@ -54,10 +54,10 @@ static int load_xdp(const char *obj_path)
         const char *title = bpf_program__section_name(prog);
         int error;
         if (strcmp(title, "sinhronizator") == 0) {
-            error = bpf_program__set_sched_cls(prog); // or sched_act?
+            error = bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
             printf(" - %s (set program type to sched_cls)\n", title);
         } else {
-            error = bpf_program__set_xdp(prog);
+            error = bpf_program__set_type(prog, BPF_PROG_TYPE_XDP);
             printf(" - %s (set program type to xdp)\n", title);
         }
 
@@ -88,14 +88,6 @@ static int load_xdp(const char *obj_path)
     if (error)
     {
         printf("LIBBPF error in function 'bpf_object__pin': %ld.\n", error);
-        goto close;
-    }
-
-    /* No need to keep object in memory anymore */
-    error = bpf_object__unload(obj);
-    if (error)
-    {
-        printf("LIBBPF error in function 'bpf_object__unload': %ld.\n", error);
         goto close;
     }
 
