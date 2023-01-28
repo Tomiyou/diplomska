@@ -43,7 +43,7 @@ struct xfe_nl_msg {
 #define XFE_IPV4_DSCP_SHIFT 2
 
 struct xfe_flow {
-	struct bpf_spin_lock lock;		/* Spinlock for every entry */
+	// struct bpf_spin_lock lock;		/* Spinlock for every entry */
 
 	/* Fields for matching packet to a flow */
 	__u32 ifindex;				/* Network device */

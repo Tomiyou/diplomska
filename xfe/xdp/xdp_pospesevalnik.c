@@ -93,7 +93,7 @@ struct {
 
 struct xfe_instance {
 	/* Global instance lock */
-	struct bpf_spin_lock lock;
+	// struct bpf_spin_lock lock;
 
 	/* Stats */
 	__u32 connection_create_requests;	/* Number of connection create requests */
@@ -391,12 +391,12 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	ip_hdr->check = ip_csum;
 
 	/* Increase packet counters */
-	bpf_spin_lock(&flow->lock);
+	// bpf_spin_lock(&flow->lock);
 	flow->packet_count += 1;
 	flow->packet_count_tick += 1;
 	flow->byte_count += (ctx->data_end - ctx->data);
 	flow->byte_count_tick += (ctx->data_end - ctx->data);
-	bpf_spin_unlock(&flow->lock);
+	// bpf_spin_unlock(&flow->lock);
 
 	/* Redirect the packet to the correct output interface */
 	action = bpf_redirect(flow->xmit_ifindex, 0);
@@ -512,12 +512,12 @@ int sinhronizator_fn(struct __sk_buff *skb)
 			return err;
 		}
 
-		bpf_spin_lock(&xfe->lock);
+		// bpf_spin_lock(&xfe->lock);
 		xfe->connection_create_requests++;
 		if (err) {
 			xfe->connection_create_collisions++;
 		}
-		bpf_spin_unlock(&xfe->lock);
+		// bpf_spin_unlock(&xfe->lock);
 		return err;
 	} else if (msg->action == XFE_KMOD_DESTROY) {
 		struct xfe_connection_destroy *destroy = &msg->destroy;
@@ -537,12 +537,12 @@ int sinhronizator_fn(struct __sk_buff *skb)
 			return err;
 		}
 
-		bpf_spin_lock(&xfe->lock);
+		// bpf_spin_lock(&xfe->lock);
 		xfe->connection_destroy_requests++;
 		if (err) {
 			xfe->connection_destroy_misses++;
 		}
-		bpf_spin_unlock(&xfe->lock);
+		// bpf_spin_unlock(&xfe->lock);
 		return err;
 	} else if (msg->action == XFE_KMOD_UPDATE) {
 	} else if (msg->action == XFE_KMOD_SYNC) {
@@ -578,12 +578,12 @@ int sinhronizator_fn(struct __sk_buff *skb)
 			DEBUG_TRACE("Syncing connection: %u %u %u\n", bpf_ntohs(sync->src_port), bpf_ntohs(sync->dest_port), flow->packet_count_tick);
 
 			/* Copy and reset counters */
-			bpf_spin_lock(&flow->lock);
+			// bpf_spin_lock(&flow->lock);
 			sync->packets = flow->packet_count_tick;
 			sync->bytes = flow->byte_count_tick;
 			flow->packet_count_tick = 0;
 			flow->byte_count_tick = 0;
-			bpf_spin_unlock(&flow->lock);
+			// bpf_spin_unlock(&flow->lock);
 		}
 
 	} else {
