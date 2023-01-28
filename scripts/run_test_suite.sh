@@ -3,10 +3,33 @@
 diplomska_host="brazzers_nuc"
 host_home_dir="/home/flowfield/diplomska"
 macbook="netops@192.168.64.150"
-iperf_command="/usr/local/bin/iperf -c 192.168.100.1 -i1 -t120 -P4"
+iperf_command="/usr/local/bin/iperf -c 192.168.100.1 -i1 -t60 -P4"
 
 remote_sudo() {
     echo "$2" | ssh -tt "$1" "sudo bash -c '$3'"
+}
+
+disable_cpu_scaling() {
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 0 --governor userspace"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 1 --governor userspace"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 2 --governor userspace"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 3 --governor userspace"
+
+    ssh "$diplomska_host" "cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"
+
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 0 --freq 1600000"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 1 --freq 1600000"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 2 --freq 1600000"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 3 --freq 1600000"
+}
+
+enable_cpu_scaling() {
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 0 --governor ondemand"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 1 --governor ondemand"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 2 --governor ondemand"
+    remote_sudo "$diplomska_host" "wersdf234" "cpufreq-set -c 3 --governor ondemand"
+
+    ssh "$diplomska_host" "cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"
 }
 
 run_test() {
@@ -17,11 +40,11 @@ run_test() {
     iperf -s -i1 > "logs/$1_$2core_iperf_server.log" &
 
     # Start mpstat CPU usage logging
-    ssh "$diplomska_host" "mpstat -P ALL 2 73 > ~/logs/$1_$2core_mpstat.log" &
+    ssh "$diplomska_host" "mpstat -P ALL 2 40 > ~/logs/$1_$2core_mpstat.log" &
     echo "mpstat started"
 
-    # Capture idle CPU for 5 seconds
-    sleep 5
+    # Capture idle CPU for 10 seconds
+    sleep 10
 
     # Start iperf client on macbook
     echo "Starting iperf client"
@@ -42,6 +65,10 @@ run_test() {
     scp "$diplomska_host:./logs/$1_$2core_mpstat.log" ./logs/
     ssh "$diplomska_host" "rm ~/logs/$1_$2core_mpstat.log"
 }
+
+
+# Disable frequency scaling
+disable_cpu_scaling
 
 
 # Pure Linux goes first
@@ -65,3 +92,7 @@ sleep 8
 run_test "xdp" "$1"
 
 remote_sudo "$diplomska_host" "wersdf234" "cd $host_home_dir/scripts; ./xfe_ctrl.sh deinit; rmmod xfe"
+
+
+# Enable frequency scaling
+enable_cpu_scaling
