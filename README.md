@@ -1,7 +1,5 @@
-Diplomska naloga
+Packet forwarding accelerator using XDP
 --------
 
-Repozitorij moje diplomske naloge
-
-Git veja `master` je precej za vejo `dev`, vendar bo s časoma sinhronizirana.
-
+XDP implementation of a packet forwarding accelerator based on SFE (https://github.com/waau/qualcomm-sfe).
+This is my diploma work.
