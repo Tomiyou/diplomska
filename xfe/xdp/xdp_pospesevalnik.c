@@ -217,16 +217,16 @@ static inline void ipv4_csum(void *data_start, int data_size,  __u64 *csum) {
 }
 
 /* L4 */
-static __always_inline uint32_t csum_add(uint32_t addend, uint32_t csum) 
+static __always_inline uint32_t xfe_csum_add(uint32_t addend, uint32_t csum) 
 {
 	uint32_t res = csum;
 	res += addend;
 	return (res + (res < addend));
 }
 
-static __always_inline uint32_t csum_sub(uint32_t addend, uint32_t csum) 
+static __always_inline uint32_t xfe_csum_sub(uint32_t addend, uint32_t csum) 
 {
-	return csum_add(csum, ~addend);
+	return xfe_csum_add(csum, ~addend);
 }
 
 static __always_inline uint16_t csum_fold_helper2(uint32_t csum) 
@@ -239,8 +239,8 @@ static __always_inline uint16_t csum_fold_helper2(uint32_t csum)
 
 static __always_inline uint16_t csum_diff4(uint32_t from, uint32_t to, uint16_t csum) 
 {
-	uint32_t tmp = csum_sub(from, ~((uint32_t)csum));
-	return csum_fold_helper2(csum_add(to, tmp));
+	uint32_t tmp = xfe_csum_sub(from, ~((uint32_t)csum));
+	return csum_fold_helper2(xfe_csum_add(to, tmp));
 }
 
 SEC("posredovalnik")
