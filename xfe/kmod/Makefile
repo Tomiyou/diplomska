@@ -4,6 +4,6 @@ xfe-objs := ./xfe_kmod_main.o ./xfe_kmod_xdp.o
 ccflags-y += -I$(obj)/../headers/
 
 all:
-	$(MAKE) -C ../../linux/ M=$(CURDIR) modules
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) modules
 clean:
-	$(MAKE) -C ../../linux/ M=$(CURDIR) clean
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) clean

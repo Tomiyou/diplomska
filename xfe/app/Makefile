@@ -1,7 +1,7 @@
-CC ?= gcc
+include ../Makefile.variable
 
-CFLAGS ?= -I../headers/ -I../../linux/tools/lib/
-LFLAGS ?= -L../../linux/tools/lib/bpf -lbpf
+CFLAGS := -I$(XFE_HEADERS_DIR) -I$(BPF_HEADERS_DIR)
+LFLAGS := -L$(LIBBPF_LINK_DIR) -lbpf
 
 all:
 	$(CC) $(CFLAGS) xfe_ctl.c -o xfe_ctl $(LFLAGS)

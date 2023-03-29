@@ -1,0 +1,8 @@
+LLC ?= llc
+CLANG ?= clang
+CC ?= gcc
+
+XFE_HEADERS_DIR ?= ../headers/
+BPF_HEADERS_DIR ?= ../../linux/tools/lib/
+LIBBPF_LINK_DIR ?= ../../linux/tools/lib/bpf
+KERNEL_SRC ?= ../../linux/
