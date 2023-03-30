@@ -27,7 +27,7 @@ static int run_bpf(enum xfe_kmod_action action, void *data, size_t data_len)
     bpf_compute_data_pointers(skb);
 
     /* Run BPF program */
-    code = bpf_prog_run(prog, skb);
+    code = BPF_PROG_RUN(prog, skb);
 
     /* Cleanup */
     kfree_skb(skb);
@@ -46,7 +46,7 @@ static int run_bpf_sync(struct sk_buff *skb)
     bpf_compute_data_pointers(skb);
 
     /* Run BPF program */
-    return bpf_prog_run(prog, skb);
+    return BPF_PROG_RUN(prog, skb);
 }
 
 int xfe_set_xdp_program(int user_fd) {

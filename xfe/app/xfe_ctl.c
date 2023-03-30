@@ -54,10 +54,10 @@ static int load_xdp(const char *obj_path)
         const char *title = bpf_program__section_name(prog);
         int error;
         if (strcmp(title, "sinhronizator") == 0) {
-            error = bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
+            bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
             printf(" - %s (set program type to sched_cls)\n", title);
         } else {
-            error = bpf_program__set_type(prog, BPF_PROG_TYPE_XDP);
+            bpf_program__set_type(prog, BPF_PROG_TYPE_XDP);
             printf(" - %s (set program type to xdp)\n", title);
         }
 
