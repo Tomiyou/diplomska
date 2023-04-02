@@ -6,9 +6,6 @@
 #include <linux/in.h>
 #include <linux/udp.h>
 #include <linux/tcp.h>
-#include <linux/filter.h>
-#include <linux/types.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 
