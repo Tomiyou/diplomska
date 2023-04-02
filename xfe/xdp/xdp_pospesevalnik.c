@@ -17,7 +17,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-#include "xfe_types.h"
+#include "../headers/xfe_types.h"
 
 /* Debug logging */
 #undef bpf_printk
