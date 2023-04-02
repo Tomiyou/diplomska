@@ -1,9 +1,10 @@
-include ../Makefile.variable
-
-CFLAGS := -I$(XFE_HEADERS_DIR) -I$(BPF_HEADERS_DIR)
-LFLAGS := -L$(LIBBPF_LINK_DIR) -lbpf
+CC ?= gcc
+CFLAGS ?= -I../../linux/tools/lib/
+LDFLAGS ?= -L../../linux/tools/lib/bpf
 
 all:
-	$(CC) $(CFLAGS) xfe_ctl.c -o xfe_ctl $(LFLAGS)
+	$(CC) -c -o xfe_ctl.o xfe_ctl.c -I../headers/ $(CFLAGS)
+	$(CC) -o xfe_ctl xfe_ctl.o -lbpf $(LDFLAGS)
+
 clean:
-	rm -rf xfe_ctl
+	rm -rf xfe_ctl *.o
