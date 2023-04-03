@@ -37,7 +37,7 @@
  * 3 = 2 + INFO
  * 4 = 3 + TRACE
  */
-#define DEBUG_LEVEL 3
+#define DEBUG_LEVEL 4
 
 #if (DEBUG_LEVEL < 1)
 	#define DEBUG_ERROR(...)
@@ -150,6 +150,22 @@ static __always_inline struct ethhdr *parse_ethhdr(void *data_start,
 	return eth_hdr; /* network-byte-order */
 }
 
+#define DSA_FRAME_SIZE 8
+
+/* Parse EDSA header */
+static __always_inline __u8 *parse_dsahdr(void *data_start,
+					  void *data_end)
+{
+	__u8 *dsa_hdr = data_start;
+
+	/* Byte-count bounds check; check if data_start + size of header
+	 * is after data_end. */
+	if (data_start + DSA_FRAME_SIZE > data_end)
+		return NULL;
+
+	return dsa_hdr; /* network-byte-order */
+}
+
 /* Parse IPv4 header */
 static __always_inline struct iphdr *parse_iphdr(void *data_start,
 						 void *data_end)
@@ -253,6 +269,8 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	struct xfe_flow *flow;
 	struct xfe_flow_key flow_key = {0};
 
+	__be16 ethertype;
+
 	/* Default action */
 	long action = XDP_PASS;
 
@@ -264,8 +282,20 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	/* Move frame pointer */
 	frame_pointer += sizeof(*eth_hdr);
 
+	/* Handle DSA tagging */
+	ethertype = eth_hdr->h_proto;
+	if (ethertype == bpf_htons(ETH_P_EDSA)) {
+		__u8 *dsa_hdr = parse_dsahdr(frame_pointer, data_end);
+		if (dsa_hdr == NULL) {
+			goto out;
+		}
+		ethertype = dsa_hdr[6] | (dsa_hdr[7] << 8);
+
+		frame_pointer += DSA_FRAME_SIZE;
+	}
+
 	/* Only allow IPv4 packets through */
-	if (eth_hdr->h_proto != bpf_htons(ETH_P_IP)) {
+	if (ethertype != bpf_htons(ETH_P_IP)) {
 		goto out;
 	}
 
@@ -277,7 +307,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	/* Move frame pointer */
 	frame_pointer += sizeof(*ip_hdr);
 
-	DEBUG_TRACE("Processing IPv4 packet with ID: %u", bpf_ntohs(ip_hdr->id));
+	DEBUG_TRACE("Processing IPv4 packet (%u) with ID: %u", ip_hdr->protocol, bpf_ntohs(ip_hdr->id));
 
 	if (ip_hdr->protocol == IPPROTO_TCP) {
 		struct tcphdr *tcp_hdr;
@@ -296,6 +326,13 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		flow_key.dest_ip = ip_hdr->daddr;
 		flow_key.src_port = tcp_hdr->source;
 		flow_key.dest_port = tcp_hdr->dest;
+
+		if (bpf_ntohs(flow_key.src_port) != 22 && bpf_ntohs(flow_key.dest_port) != 22) {
+			DEBUG_TRACE("TCP packet:");
+			DEBUG_TRACE("L3 %pI4 -> %pI4", &flow_key.src_ip, &flow_key.dest_ip);
+			DEBUG_TRACE("L4 %u -> %u\n", bpf_ntohs(flow_key.src_port), bpf_ntohs(flow_key.dest_port));
+		}
+
 		flow = bpf_map_lookup_elem(&xdp_povezave, &flow_key);
 		if (!flow) {
 			goto out;
