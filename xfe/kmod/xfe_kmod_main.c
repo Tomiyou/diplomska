@@ -706,6 +706,18 @@ static unsigned int xfe_post_routing(struct sk_buff *skb, bool is_v4)
 		// xfe_incr_exceptions(XFE_EXCEPTION_NO_SRC_DEV);
 		return NF_ACCEPT;
 	}
+
+	/* Handle DSA switch */
+	if (strncmp(dest_dev->name, "lan", 3) == 0) {
+		sic.flags |= XFE_CREATE_FLAG_APPEND_DSA;
+		sic.dest_ifindex = 3;
+		printk("Dest dev is %s, must append DSA\n", dest_dev->name);
+	} else if (strncmp(src_dev->name, "lan", 3) == 0) {
+		sic.flags |= XFE_CREATE_FLAG_STRIP_DSA;
+		sic.src_ifindex = 3;
+		printk("Src dev is %s, must strip DSA\n", src_dev->name);
+	}
+
 	sic.src_ifindex = src_dev->ifindex;
 	sic.src_mtu = src_dev->mtu;
 	dev_put(src_dev);

@@ -24,19 +24,23 @@ struct xfe_nl_msg {
  * Bit flags for IPv4 connection matching entry.
  */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC (1<<0)
-					/* Perform source translation */
+			/* Perform source translation */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST (1<<1)
-					/* Perform destination translation */
+			/* Perform destination translation */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK (1<<2)
-					/* Ignore TCP sequence numbers */
+			/* Ignore TCP sequence numbers */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR (1<<3)
-					/* Fast Ethernet header write */
+			/* Fast Ethernet header write */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR (1<<4)
-					/* Fast Ethernet header write */
+			/* Fast Ethernet header write */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK (1<<5)
-					/* remark priority of SKB */
+			/* remark priority of SKB */
 #define XFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK (1<<6)
-					/* remark DSCP of packet */
+			/* remark DSCP of packet */
+#define XFE_IPV4_CONNECTION_MATCH_FLAG_STRIP_DSA (1<<7)
+			/* Strip DSA header from packet */
+#define XFE_IPV4_CONNECTION_MATCH_FLAG_APPEND_DSA (1<<8)
+			/* Append DSA header to packet */
 
 /* DSCP remarking */
 #define XFE_IPV4_DSCP_MASK 0x3
@@ -81,11 +85,15 @@ struct xfe_flow {
 };
 
 #define XFE_CREATE_FLAG_NO_SEQ_CHECK (1<<0)
-					/* Indicates that we should not check sequence numbers */
+			/* Indicates that we should not check sequence numbers */
 #define XFE_CREATE_FLAG_REMARK_PRIORITY (1<<1)
-					/* Indicates that we should remark priority of skb */
+			/* Indicates that we should remark priority of skb */
 #define XFE_CREATE_FLAG_REMARK_DSCP (1<<2)
-					/* Indicates that we should remark DSCP of packet */
+			/* Indicates that we should remark DSCP of packet */
+#define XFE_CREATE_FLAG_STRIP_DSA (1<<7)
+			/* Strip DSA header from packet */
+#define XFE_CREATE_FLAG_APPEND_DSA (1<<8)
+			/* Append DSA header to packet */
 
 typedef union {
 	__be32			ip;
@@ -190,6 +198,12 @@ struct xfe_kmod_message_sync {
 	enum xfe_kmod_action action;
 	struct xfe_connection_sync sync[1024];
 	__u16 connection_count;
+};
+
+struct xfe_dsa_info {
+	__be16 ethertype;
+	__u8 device;
+	__u8 port;
 };
 
 #endif /* XFE_TYPES_H */

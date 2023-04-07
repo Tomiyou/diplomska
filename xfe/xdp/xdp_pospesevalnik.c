@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+#include <string.h>
 #define KBUILD_MODNAME "foo"
 #include <stddef.h>
 #include <linux/if_ether.h>
@@ -135,81 +136,30 @@ static const __u32 always_zero = 0;
 #define lock_xadd(ptr, val)	((void) __sync_fetch_and_add(ptr, val))
 #endif
 
-/* Parse ethernet header */
-static __always_inline struct ethhdr *parse_ethhdr(void *data_start,
-						   void *data_end)
-{
-	struct ethhdr *eth_hdr = data_start;
-	int hdr_size = sizeof(*eth_hdr);
-
-	/* Byte-count bounds check; check if data_start + size of header
-	 * is after data_end. */
-	if (data_start + hdr_size > data_end)
-		return NULL;
-
-	return eth_hdr; /* network-byte-order */
-}
-
-#define DSA_FRAME_SIZE 8
-
-/* Parse EDSA header */
-static __always_inline __u8 *parse_dsahdr(void *data_start,
-					  void *data_end)
-{
-	__u8 *dsa_hdr = data_start;
-
-	/* Byte-count bounds check; check if data_start + size of header
-	 * is after data_end. */
-	if (data_start + DSA_FRAME_SIZE > data_end)
-		return NULL;
-
-	return dsa_hdr; /* network-byte-order */
-}
-
-/* Parse IPv4 header */
-static __always_inline struct iphdr *parse_iphdr(void *data_start,
-						 void *data_end)
-{
-	struct iphdr *ip_hdr = data_start;
-	int hdr_size = sizeof(*ip_hdr);
-
-	/* Byte-count bounds check; check if data_start + size of header
-	 * is after data_end. */
-	if (data_start + hdr_size > data_end)
-		return NULL;
-
-	return ip_hdr; /* network-byte-order */
-}
-
-/* Parse TCP header */
-static __always_inline struct tcphdr *parse_tcphdr(void *data_start,
-						   void *data_end)
-{
-	struct tcphdr *tcp_header = data_start;
-	int hdr_size = sizeof(*tcp_header);
-
-	/* Byte-count bounds check; check if data_start + size of header
-	 * is after data_end. */
-	if (data_start + hdr_size > data_end)
-		return NULL;
-
-	return tcp_header; /* network-byte-order */
-}
-
-/* Parse UDP header */
-static __always_inline struct udphdr *parse_udphdr(void *data_start,
-						   void *data_end)
-{
-	struct udphdr *udp_header = data_start;
-	int hdr_size = sizeof(*udp_header);
-
-	/* Byte-count bounds check; check if data_start + size of header
-	 * is after data_end. */
-	if (data_start + hdr_size > data_end)
-		return NULL;
-
-	return udp_header; /* network-byte-order */
-}
+struct dsa_header {
+	__u16 reserved;
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8	device: 5,
+		b29: 1,
+  		mode: 2;
+	__u8	b16: 1,
+		b17: 1,
+		b18: 1,
+		port: 5;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u8	mode: 2,
+		b29: 1,
+  		device: 5;
+	__u8	port: 5,
+		b18: 1,
+		b17: 1,
+		b16: 1;
+#else
+#error	"Please fix <asm/byteorder.h>"
+#endif
+	__be16 vid;
+	__be16 ethertype;
+};
 
 /* IPv4 */
 __attribute__((__always_inline__))
@@ -256,6 +206,12 @@ static __always_inline uint16_t csum_diff4(uint32_t from, uint32_t to, uint16_t 
 	return csum_fold_helper2(xfe_csum_add(to, tmp));
 }
 
+#define READ_HEADER_SAFE(data_start, data_end, header) \
+		if (data_start + sizeof(*header) > data_end)\
+			goto out;\
+		header = data_start;\
+		data_start += sizeof(*header);
+
 SEC("posredovalnik")
 int posredovalnik_fn(struct xdp_md *ctx)
 {
@@ -266,6 +222,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	/* Packet headers */
 	struct ethhdr *eth_hdr;
 	struct iphdr *ip_hdr;
+	struct dsa_header *dsa_hdr;
 	struct xfe_flow *flow;
 	struct xfe_flow_key flow_key = {0};
 
@@ -273,25 +230,16 @@ int posredovalnik_fn(struct xdp_md *ctx)
 
 	/* Default action */
 	long action = XDP_PASS;
+	long error = 0;
 
 	/* Parse ethernet header */
-	eth_hdr = parse_ethhdr(frame_pointer, data_end);
-	if (eth_hdr == NULL) {
-		goto out;
-	}
-	/* Move frame pointer */
-	frame_pointer += sizeof(*eth_hdr);
+	READ_HEADER_SAFE(frame_pointer, data_end, eth_hdr);
 
 	/* Handle DSA tagging */
 	ethertype = eth_hdr->h_proto;
 	if (ethertype == bpf_htons(ETH_P_EDSA)) {
-		__u8 *dsa_hdr = parse_dsahdr(frame_pointer, data_end);
-		if (dsa_hdr == NULL) {
-			goto out;
-		}
-		ethertype = dsa_hdr[6] | (dsa_hdr[7] << 8);
-
-		frame_pointer += DSA_FRAME_SIZE;
+		READ_HEADER_SAFE(frame_pointer, data_end, dsa_hdr);
+		ethertype = dsa_hdr->ethertype;
 	}
 
 	/* Only allow IPv4 packets through */
@@ -300,25 +248,15 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	}
 
 	/* Parse IPv4 header */
-	ip_hdr = parse_iphdr(frame_pointer, data_end);
-	if (ip_hdr == NULL) {
-		goto out;
-	}
-	/* Move frame pointer */
-	frame_pointer += sizeof(*ip_hdr);
+	READ_HEADER_SAFE(frame_pointer, data_end, ip_hdr);
 
-	DEBUG_TRACE("Processing IPv4 packet (%u) with ID: %u", ip_hdr->protocol, bpf_ntohs(ip_hdr->id));
+	DEBUG_TRACE("Processing IPv4 packet %x (%u) with ID: %u", data_start, ip_hdr->protocol, bpf_ntohs(ip_hdr->id));
 
 	if (ip_hdr->protocol == IPPROTO_TCP) {
 		struct tcphdr *tcp_hdr;
 
 		/* Parse TCP header */
-		tcp_hdr = parse_tcphdr(frame_pointer, data_end);
-		if (tcp_hdr == NULL) {
-			goto out;
-		}
-		/* Move frame pointer */
-		frame_pointer += sizeof(*tcp_hdr);
+		READ_HEADER_SAFE(frame_pointer, data_end, tcp_hdr);
 
 		/* Do flow lookup */
 		flow_key.ip_proto = ip_hdr->protocol;
@@ -326,12 +264,6 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		flow_key.dest_ip = ip_hdr->daddr;
 		flow_key.src_port = tcp_hdr->source;
 		flow_key.dest_port = tcp_hdr->dest;
-
-		if (bpf_ntohs(flow_key.src_port) != 22 && bpf_ntohs(flow_key.dest_port) != 22) {
-			DEBUG_TRACE("TCP packet:");
-			DEBUG_TRACE("L3 %pI4 -> %pI4", &flow_key.src_ip, &flow_key.dest_ip);
-			DEBUG_TRACE("L4 %u -> %u\n", bpf_ntohs(flow_key.src_port), bpf_ntohs(flow_key.dest_port));
-		}
 
 		flow = bpf_map_lookup_elem(&xdp_povezave, &flow_key);
 		if (!flow) {
@@ -345,11 +277,80 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		DEBUG_TRACE("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
 		DEBUG_TRACE("L3 %pI4 -> %pI4", &ip_hdr->saddr, &ip_hdr->daddr);
 		DEBUG_TRACE("L3 %pI4 -> %pI4", &flow->xlate_src_ip, &flow->xlate_dest_ip);
-		DEBUG_TRACE("L4 %u -> %u\n", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
+		DEBUG_TRACE("L4 %u -> %u", bpf_ntohs(flow->xlate_src_port), bpf_ntohs(flow->xlate_dest_port));
 
 		/* If we have any TCP flag, send packet through slowpath */
 		if (tcp_hdr->syn || tcp_hdr->rst || tcp_hdr->fin) {
 			goto out;
+		}
+
+		/* Check if we need to strip or append DSA header */
+		if (flow->flags & XFE_IPV4_CONNECTION_MATCH_FLAG_STRIP_DSA) {
+			DEBUG_TRACE("Stripping DSA header %x %x %x", eth_hdr, ip_hdr, tcp_hdr);
+			/* Strip DSA header */
+			error = bpf_xdp_adjust_head(ctx, sizeof(*dsa_hdr));
+			if (error) {
+				DEBUG_ERROR("Error stripping DSA header from XDP context");
+				goto out;
+			}
+
+			data_start = (void *)(long)ctx->data;
+			data_end = (void *)(long)ctx->data_end;
+			frame_pointer = data_start;
+
+			/* Recheck ETHERNET header */
+			READ_HEADER_SAFE(frame_pointer, data_end, eth_hdr);
+
+			/* Recheck IP header */
+			READ_HEADER_SAFE(frame_pointer, data_end, ip_hdr);
+
+			if (ip_hdr->protocol != IPPROTO_TCP) {
+				DEBUG_TRACE("WHAT THE FUCK, this should never happen %x %x %x", eth_hdr, ip_hdr, tcp_hdr);
+				goto out;
+			}
+
+			/* Recheck TCP header */
+			READ_HEADER_SAFE(frame_pointer, data_end, tcp_hdr);
+
+			eth_hdr->h_proto = bpf_htons(ETH_P_IP);
+		} else if (flow->flags & XFE_IPV4_CONNECTION_MATCH_FLAG_APPEND_DSA) {
+			DEBUG_TRACE("Appending DSA header %x %x %x", eth_hdr, ip_hdr, tcp_hdr);
+			/* Strip DSA header */
+			error = bpf_xdp_adjust_head(ctx, 0 - ((int) sizeof(*dsa_hdr)));
+			if (error) {
+				DEBUG_ERROR("Error expanding XDP context to fit DSA header");
+				goto out;
+			}
+
+			data_start = (void *)(long)ctx->data;
+			data_end = (void *)(long)ctx->data_end;
+			frame_pointer = data_start;
+
+			/* Recheck ETHERNET header */
+			READ_HEADER_SAFE(frame_pointer, data_end, eth_hdr);
+
+			/* Recheck DSA header */
+			READ_HEADER_SAFE(frame_pointer, data_end, dsa_hdr);
+
+			/* Recheck IP header */
+			READ_HEADER_SAFE(frame_pointer, data_end, ip_hdr);
+
+			if (ip_hdr->protocol != IPPROTO_TCP) {
+				DEBUG_TRACE("WHAT THE FUCK, this should never happen %x %x %x", eth_hdr, ip_hdr, tcp_hdr);
+				goto out;
+			}
+
+			/* Recheck TCP header */
+			READ_HEADER_SAFE(frame_pointer, data_end, tcp_hdr);
+
+			/* Adjust DSA header */
+			eth_hdr->h_proto = bpf_htons(ETH_P_EDSA);
+			memset(dsa_hdr, 0, sizeof(*dsa_hdr));
+			dsa_hdr->ethertype = bpf_htons(ETH_P_IP);
+			dsa_hdr->mode = 0x1;
+			dsa_hdr->port = 0x4;
+			blabla = (void *)dsa_hdr;
+			DEBUG_TRACE("DSA mode: %u, port: %x, device: %x", dsa_hdr->mode, dsa_hdr->port, dsa_hdr->device);
 		}
 
 		/* Forward the packet */
@@ -372,12 +373,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 		struct udphdr *udp_hdr;
 
 		/* Parse UDP header */
-		udp_hdr = parse_udphdr(frame_pointer, data_end);
-		if (udp_hdr == NULL) {
-			goto out;
-		}
-		/* Move frame pointer */
-		frame_pointer += sizeof(*udp_hdr);
+		READ_HEADER_SAFE(frame_pointer, data_end, udp_hdr);
 
 		/* Do flow lookup */
 		flow_key.ip_proto = ip_hdr->protocol;
@@ -425,6 +421,8 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	ipv4_csum(ip_hdr, sizeof(*ip_hdr), &ip_csum);
 	ip_hdr->check = ip_csum;
 
+	DEBUG_TRACE("Forwarding packet %x", data_start);
+
 	/* Increase packet counters */
 	// bpf_spin_lock(&flow->lock);
 	flow->packet_count += 1;
@@ -440,6 +438,7 @@ int posredovalnik_fn(struct xdp_md *ctx)
 	}
 
 out:
+	DEBUG_TRACE("");
 	return action;
 }
 
@@ -504,6 +503,8 @@ int sinhronizator_fn(struct __sk_buff *skb)
 		DEBUG_INFO("   %x:%x:%x", flow->xlate_src_mac[3], flow->xlate_src_mac[4], flow->xlate_src_mac[5]);
 		DEBUG_INFO("B2 %x:%x:%x", flow->xlate_dst_mac[0], flow->xlate_dst_mac[1], flow->xlate_dst_mac[2]);
 		DEBUG_INFO("   %x:%x:%x", flow->xlate_dst_mac[3], flow->xlate_dst_mac[4], flow->xlate_dst_mac[5]);
+		DEBUG_INFO("IF %u -> %u", flow->ifindex, flow->xmit_ifindex);
+		DEBUG_INFO("   %u -> %u", bpf_ntohs(flow->src_port), bpf_ntohs(flow->dest_port));
 
 		/* Stats */
 		flow->packet_count = 0;
@@ -526,6 +527,13 @@ int sinhronizator_fn(struct __sk_buff *skb)
 		if (create->src_ip.ip != create->xlate_src_ip.ip ||
 			create->src_port != create->xlate_src_port) {
 			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC;
+		}
+		/* DSA frame support */
+		if (create->flags & XFE_CREATE_FLAG_STRIP_DSA) {
+			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_STRIP_DSA;
+		}
+		if (create->flags & XFE_CREATE_FLAG_APPEND_DSA) {
+			flow->flags |= XFE_IPV4_CONNECTION_MATCH_FLAG_APPEND_DSA;
 		}
 
 		/* Insert flow into hash table */
