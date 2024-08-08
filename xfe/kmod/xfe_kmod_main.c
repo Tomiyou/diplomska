@@ -1335,18 +1335,13 @@ static int __init xfe_init(void)
 	/* TODO .... */
 	return 0;
 
-exit6:
-	netlink_kernel_release(nl_sock);
-
 exit5:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net);
-
-exit4:
 #endif
-	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
-
+	cancel_delayed_work_sync(&sync_dwork);
 	kfree_skb(sync_skb);
+	nf_unregister_net_hooks(&init_net, xfe_ops_post_routing, ARRAY_SIZE(xfe_ops_post_routing));
 
 exit3:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
